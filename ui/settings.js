@@ -40,7 +40,7 @@ export function SettingsView({ onBack }) {
   const prepareUpdate = async () => {
     const result = await window.browser.prepareUpdate()
     if (result.success) {
-      setMessage(`Update prepared at ${result.path}. Open Claude Code in your source directory and run /update-ui`)
+      setMessage('UPDATE.md written to your source directory. Open Claude Code there and run /update-ui')
     } else {
       setMessage(result.error)
     }
@@ -73,15 +73,33 @@ export function SettingsView({ onBack }) {
   return html`
     <div class="settings-view">
       <div class="settings-header">
-        <button class="settings-back" onClick=${onBack} aria-label="Back">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <span class="settings-title">Settings</span>
+        <button class="settings-close" onClick=${onBack} aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
           </svg>
         </button>
-        <span class="settings-title">Settings</span>
       </div>
 
       <div class="settings-body">
+
+        <div class="settings-field">
+          <label class="settings-label">Appearance</label>
+          <div class="settings-segmented">
+            ${['system', 'light', 'dark'].map(mode => html`
+              <button
+                class="settings-segment ${(settings.color_mode || 'system') === mode ? 'active' : ''}"
+                onClick=${async () => {
+                  const updated = { ...settings, color_mode: mode }
+                  await window.browser.saveSettings(updated)
+                  setSettings(updated)
+                }}
+              >${mode}</button>
+            `)}
+          </div>
+        </div>
+
+        <hr class="settings-divider" />
 
         <div class="settings-field">
           <label class="settings-label">Site Rules</label>
@@ -89,14 +107,6 @@ export function SettingsView({ onBack }) {
 
           ${siteRules?.rules?.length > 0
             ? html`
-              <div class="rules-header">
-                <button class="rules-toggle-all" onClick=${async () => {
-                  const allEnabled = siteRules.rules.every(r => r.enabled)
-                  const updated = { ...siteRules, rules: siteRules.rules.map(r => ({ ...r, enabled: !allEnabled })) }
-                  await window.browser.saveSiteRules(updated)
-                  setSiteRules(updated)
-                }}>${siteRules.rules.every(r => r.enabled) ? 'Disable All' : 'Enable All'}</button>
-              </div>
               <ul class="rules-list">
                 ${siteRules.rules.map((rule, i) => html`
                   <li class="rule-item" onClick=${() => {
@@ -106,11 +116,15 @@ export function SettingsView({ onBack }) {
                     <label class="rule-toggle" onClick=${e => e.stopPropagation()}>
                       <input type="checkbox" checked=${rule.enabled} onChange=${() => toggleRule(i)} />
                     </label>
-                    <div class="rule-info">
+                    <span class="rule-info">
                       <span class="rule-name">${rule.name}</span>
                       <span class="rule-matches">${rule.matches.join(', ')}</span>
-                    </div>
-                    <button class="rule-remove" onClick=${(e) => { e.stopPropagation(); removeRule(i) }} aria-label="Remove">x</button>
+                    </span>
+                    <span class="rule-remove" onClick=${(e) => { e.stopPropagation(); removeRule(i) }} aria-label="Remove">
+                      <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                      </svg>
+                    </span>
                   </li>
                 `)}
               </ul>
@@ -123,6 +137,8 @@ export function SettingsView({ onBack }) {
             <button class="settings-btn" onClick=${() => window.browser.openSitesConfig()}>Edit Config</button>
           </div>
         </div>
+
+        <hr class="settings-divider" />
 
         <div class="settings-field">
           <label class="settings-label">Source Directory</label>

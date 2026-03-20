@@ -1,5 +1,9 @@
-import { html, render, useState, useEffect, useRef, useCallback } from './lib/preact.js'
+import { html, render, useState, useEffect, useRef, useCallback, useMemo } from './lib/preact.js'
 import { SettingsView } from './settings.js'
+import { Toast } from './components/toast.js'
+import { TabList } from './components/tab-list.js'
+import { Suggestions } from './components/suggestions.js'
+import { SettingsGear } from './components/settings-gear.js'
 
 function App() {
   const [visible, setVisible] = useState(false)
@@ -7,15 +11,21 @@ function App() {
   const [tabs, setTabs] = useState([])
   const [activeTabId, setActiveTabId] = useState(0)
   const [history, setHistory] = useState([])
-  const [selectedIdx, setSelectedIdx] = useState(0)
-  const [blankTab, setBlankTab] = useState(false)
-  const [view, setView] = useState('main')
+  const [selectedIdx, setSelectedIdx] = useState(-1)
+  const [blankTab, _setBlankTab] = useState(false)
+  const blankTabRef = useRef(false)
+  const setBlankTab = (v) => { blankTabRef.current = v; _setBlankTab(v) }
+  const [view, _setView] = useState('main')
+  const viewRef = useRef('main')
+  const setView = (v) => { viewRef.current = v; _setView(v) }
+  const [toast, setToast] = useState(null)
+  const toastTimer = useRef(null)
   const inputRef = useRef(null)
   const listRef = useRef(null)
 
   function openOverlay() {
     setView('main')
-    setSelectedIdx(0)
+    setSelectedIdx(-1)
     window.browser.getHistory().then(setHistory)
     window.browser.getTabs().then(s => {
       setTabs(s.tabs)
@@ -25,20 +35,38 @@ function App() {
     })
   }
 
-  // Listen for overlay toggle from main process
   useEffect(() => {
     window.browser.onToggleOverlay(() => {
       setVisible(v => {
-        const next = !v
-        window.browser.setOverlayVisible(next)
-        if (next) openOverlay()
-        return next
+        if (v) {
+          // If in settings, go back to main and focus input
+          if (viewRef.current === 'settings') {
+            setView('main')
+            setTimeout(() => { if (inputRef.current) { inputRef.current.focus(); inputRef.current.select() } }, 10)
+            return v
+          }
+          // If input isn't focused, focus it instead of closing
+          if (inputRef.current && document.activeElement !== inputRef.current) {
+            inputRef.current.focus()
+            inputRef.current.select()
+            return v
+          }
+          // Don't allow closing if on a blank tab
+          if (blankTabRef.current) return v
+          window.browser.setOverlayVisible(false)
+          return false
+        }
+        window.browser.setOverlayVisible(true)
+        openOverlay()
+        return true
       })
     })
     window.browser.onShowOverlay(() => {
       setBlankTab(true)
       setVisible(true)
+      setView('main')
       openOverlay()
+      setTimeout(() => { if (inputRef.current) { inputRef.current.focus(); inputRef.current.select() } }, 50)
     })
     window.browser.onHideOverlay(() => {
       setBlankTab(false)
@@ -50,21 +78,34 @@ function App() {
       const active = state.tabs.find(t => t.id === state.activeTabId)
       setBlankTab(!active || !active.url)
     })
+    window.browser.onShowSettings(() => {
+      setVisible(true)
+      setView('settings')
+      window.browser.setOverlayVisible(true)
+    })
+    window.browser.onToast((msg) => {
+      setToast(msg)
+      clearTimeout(toastTimer.current)
+      toastTimer.current = setTimeout(() => setToast(null), 2000)
+    })
   }, [])
 
-  // Auto-focus and select all when overlay opens
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'Escape' && visible && !blankTab) {
+        setVisible(false)
+        window.browser.setOverlayVisible(false)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [visible, blankTab])
+
   useEffect(() => {
     if (visible && inputRef.current) {
       setTimeout(() => { inputRef.current.focus(); inputRef.current.select() }, 10)
     }
   }, [visible])
-
-  // Scroll selected item into view
-  useEffect(() => {
-    if (!listRef.current) return
-    const el = listRef.current.children[selectedIdx]
-    if (el) el.scrollIntoView({ block: 'nearest' })
-  }, [selectedIdx])
 
   const hideOverlay = useCallback(() => {
     if (blankTab) return
@@ -72,112 +113,160 @@ function App() {
     window.browser.setOverlayVisible(false)
   }, [blankTab])
 
-  const filteredHistory = query.trim()
-    ? history.filter(h =>
-        h.url.toLowerCase().includes(query.toLowerCase()) ||
-        h.title.toLowerCase().includes(query.toLowerCase())
-      ).slice(0, 8)
-    : history.slice(0, 8)
+  const dismissAndNavigate = useCallback((url) => {
+    setBlankTab(false)
+    window.browser.navigate(url)
+    setVisible(false)
+    window.browser.setOverlayVisible(false)
+  }, [])
+
+  const domainMatch = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q || q.includes('/') || q.includes(' ')) return null
+    const seen = new Set()
+    for (const h of history) {
+      try {
+        const host = new URL(h.url).hostname.replace(/^www\./, '')
+        if (seen.has(host)) continue
+        seen.add(host)
+        if (host.startsWith(q)) {
+          return { url: 'https://' + host, title: host, isDomain: true }
+        }
+      } catch {}
+    }
+    return null
+  }, [query, history])
+
+  const isTyping = useMemo(() => {
+    const q = query.trim()
+    if (!q) return false
+    const active = tabs.find(t => t.id === activeTabId)
+    return q !== (active?.url || '')
+  }, [query, tabs, activeTabId])
+
+  const filteredHistory = useMemo(() => {
+    if (!isTyping) return []
+    const q = query.trim()
+    const items = q
+      ? history.filter(h =>
+          h.url.toLowerCase().includes(q.toLowerCase()) ||
+          h.title.toLowerCase().includes(q.toLowerCase())
+        ).slice(0, 8)
+      : []
+    if (domainMatch) {
+      const filtered = items.filter(h => {
+        try { return new URL(h.url).hostname.replace(/^www\./, '') !== new URL(domainMatch.url).hostname } catch { return true }
+      })
+      return [domainMatch, ...filtered.slice(0, 7)]
+    }
+    return items
+  }, [query, history, domainMatch, isTyping])
+
+  useEffect(() => {
+    if (domainMatch && filteredHistory.length > 0) {
+      setSelectedIdx(0)
+    }
+  }, [domainMatch, filteredHistory.length])
+
+  useEffect(() => {
+    if (!listRef.current) return
+    if (selectedIdx < 0) {
+      listRef.current.scrollTop = listRef.current.scrollHeight
+    } else {
+      const el = listRef.current.children[selectedIdx]
+      if (el) {
+        el.scrollIntoView({ block: 'nearest' })
+        // Ensure top padding is visible when at the top-most item
+        if (selectedIdx === filteredHistory.length - 1) {
+          listRef.current.scrollTop = 0
+        }
+      }
+    }
+  }, [selectedIdx, filteredHistory.length])
 
   const submit = useCallback(() => {
     if (!query.trim()) return
-    setBlankTab(false)
-    window.browser.navigate(query.trim())
-    setVisible(false)
-    window.browser.setOverlayVisible(false)
-  }, [query])
+    dismissAndNavigate(query.trim())
+  }, [query, dismissAndNavigate])
 
   const onKeyDown = useCallback((e) => {
     if (e.key === 'Escape') {
-      setBlankTab(false)
+      if (blankTab) return
       setVisible(false)
       window.browser.setOverlayVisible(false)
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setSelectedIdx(i => Math.min(i + 1, filteredHistory.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setSelectedIdx(i => Math.max(i - 1, 0))
+      setSelectedIdx(i => Math.min(i + 1, filteredHistory.length - 1))
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setSelectedIdx(i => Math.max(i - 1, -1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (filteredHistory.length > 0 && selectedIdx < filteredHistory.length && !query.includes('://') && !query.includes('.')) {
-        const item = filteredHistory[selectedIdx]
-        setBlankTab(false)
-        window.browser.navigate(item.url)
+      const url = selectedIdx >= 0 && selectedIdx < filteredHistory.length
+        ? filteredHistory[selectedIdx].url
+        : query.trim()
+      if (!url) return
+      if (e.shiftKey) {
+        window.browser.newTab()
+        setTimeout(() => { window.browser.navigate(url) }, 100)
         setVisible(false)
         window.browser.setOverlayVisible(false)
+      } else if (selectedIdx >= 0) {
+        dismissAndNavigate(url)
       } else {
         submit()
       }
     }
-  }, [filteredHistory, selectedIdx, query, submit])
-
-  if (!visible) return null
+  }, [filteredHistory, selectedIdx, query, submit, blankTab, dismissAndNavigate])
 
   return html`
+    <${Toast} message=${toast} />
+    ${!visible ? null : html`
     <div class="overlay-backdrop" onClick=${hideOverlay}>
       <div class="overlay" onClick=${e => e.stopPropagation()}>
-
-        <div class="tab-strip">
-          ${tabs.map(t => html`
-            <button
-              class="tab ${t.id === activeTabId ? 'active' : ''}"
-              onClick=${() => { window.browser.switchTab(t.id) }}
-            >
-              ${t.favicon && html`<img class="tab-favicon" src=${t.favicon} />`}
-              <span class="tab-title">${t.title || 'New Tab'}</span>
-              <span class="tab-close" onClick=${(e) => { e.stopPropagation(); window.browser.closeTab(t.id) }}>×</span>
-            </button>
-          `)}
-          <button class="tab tab-new" onClick=${() => { window.browser.newTab(); }}>+</button>
-          <button class="settings-gear" onClick=${() => setView(v => v === 'main' ? 'settings' : 'main')} aria-label="Settings">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path d="M6.5 1.5h3l.4 1.8.7.3 1.6-.9 2.1 2.1-.9 1.6.3.7 1.8.4v3l-1.8.4-.3.7.9 1.6-2.1 2.1-1.6-.9-.7.3-.4 1.8h-3l-.4-1.8-.7-.3-1.6.9-2.1-2.1.9-1.6-.3-.7L.5 9.5v-3l1.8-.4.3-.7-.9-1.6 2.1-2.1 1.6.9.7-.3.4-1.8z" stroke="currentColor" stroke-width="1.2"/>
-              <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2"/>
-            </svg>
-          </button>
-        </div>
 
         ${view === 'settings'
           ? html`<${SettingsView} onBack=${() => setView('main')} />`
           : html`
-            <input
-              ref=${inputRef}
-              class="url-input"
-              type="text"
-              placeholder="Search or enter URL..."
-              value=${query}
-              onInput=${e => { setQuery(e.target.value); setSelectedIdx(0) }}
-              onKeyDown=${onKeyDown}
-              role="combobox"
-              aria-expanded=${filteredHistory.length > 0}
-              aria-controls="suggestions-list"
-              aria-activedescendant=${filteredHistory.length > 0 ? `suggestion-${selectedIdx}` : undefined}
-              aria-autocomplete="list"
-              aria-label="Search or enter URL"
-            />
+            <div class="overlay-body">
+              <${SettingsGear} onClick=${() => setView('settings')} />
 
-            ${filteredHistory.length > 0 && html`
-              <ul class="suggestions" id="suggestions-list" role="listbox" ref=${listRef} aria-label="Suggestions">
-                ${filteredHistory.map((h, i) => html`
-                  <li
-                    id="suggestion-${i}"
-                    role="option"
-                    aria-selected=${i === selectedIdx}
-                    class="suggestion ${i === selectedIdx ? 'selected' : ''}"
-                    onClick=${() => { setBlankTab(false); window.browser.navigate(h.url); setVisible(false); window.browser.setOverlayVisible(false) }}
-                    onMouseEnter=${() => setSelectedIdx(i)}
-                  >
-                    <span class="suggestion-title">${h.title}</span>
-                    <span class="suggestion-url">${h.url}</span>
-                  </li>
-                `)}
-              </ul>
-            `}
+              <div class="overlay-top">
+                <${TabList} tabs=${tabs} activeTabId=${activeTabId} />
+              </div>
+
+              <div class="overlay-bottom">
+                <div class="overlay-input-wrap">
+                  <${Suggestions}
+                    items=${filteredHistory}
+                    selectedIdx=${selectedIdx}
+                    onSelect=${(h) => dismissAndNavigate(h.url)}
+                    onHover=${(i) => setSelectedIdx(i)}
+                    listRef=${listRef}
+                  />
+                  <input
+                    ref=${inputRef}
+                    class="url-input"
+                    type="text"
+                    placeholder="Search or enter a URL..."
+                    value=${query}
+                    onInput=${e => { setQuery(e.target.value); setSelectedIdx(-1) }}
+                    onKeyDown=${onKeyDown}
+                    role="combobox"
+                    aria-expanded=${filteredHistory.length > 0}
+                    aria-controls="suggestions-list"
+                    aria-activedescendant=${selectedIdx >= 0 ? `suggestion-${selectedIdx}` : undefined}
+                    aria-autocomplete="list"
+                    aria-label="Search or enter URL"
+                  />
+                </div>
+              </div>
+            </div>
           `
         }
       </div>
     </div>
+    `}
   `
 }
 

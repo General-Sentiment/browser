@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, dialog, nativeTheme } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, dialog, nativeTheme, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -21,6 +21,9 @@ const DEFAULT_SETTINGS_YML = `# ~/.browser/settings.yml
 
 # Default search engine ($s = search terms)
 search: https://www.google.com/search?q=$s
+
+# Color mode: system, light, or dark
+# color_mode: system
 
 # Source directory — eject here to customize the browser
 # Copies both ui/ and sites/ into your directory
@@ -130,6 +133,8 @@ function checkForUIUpdates() {
       ...walkDir(BUILTIN_UI, 'ui'),
       ...walkDir(BUILTIN_SITES, 'sites'),
     }
+    const agentsSrc = path.join(__dirname, 'AGENTS.md')
+    if (fs.existsSync(agentsSrc)) builtinHashes['AGENTS.md'] = hashFile(agentsSrc)
     const files = []
 
     for (const [rel, hash] of Object.entries(builtinHashes)) {
@@ -160,10 +165,15 @@ function checkForUIUpdates() {
   }
 }
 
+function applyColorMode() {
+  const mode = settings.color_mode || 'system'
+  nativeTheme.themeSource = mode === 'light' ? 'light' : mode === 'dark' ? 'dark' : 'system'
+}
+
 function saveSettings(newSettings) {
-  // Preserve comments by rewriting the full YAML
   fs.writeFileSync(SETTINGS_PATH, yaml.dump(newSettings))
   settings = newSettings
+  applyColorMode()
 }
 
 // ── Site rules (user styles & scripts) ─────────────────────────────────────────
@@ -234,21 +244,40 @@ function registerShortcuts(contents, getState) {
     if (!input.meta && !input.control) return
     const state = getState()
     if (!state) return
-    const key = input.key.toLowerCase()
+    const key = input.key?.toLowerCase()
 
-    if ((key === 'k' || key === 'l') && input.type === 'keyDown') {
+    if (key === ',' && input.type === 'keyDown') {
+      event.preventDefault()
+      if (state.overlayView) {
+        fitOverlay(state)
+        state.overlayView.webContents.focus()
+        state.win.setWindowButtonPosition({ x: 12, y: 12 })
+        state.overlayView.webContents.send('show-settings')
+      }
+    } else if ((key === 'k' || key === 'l' || key === ';') && input.type === 'keyDown') {
       event.preventDefault()
       if (state.overlayView) state.overlayView.webContents.send('toggle-overlay')
     } else if (key === 't' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
       createTab(state, '')
-      if (state.overlayView) state.overlayView.webContents.send('toggle-overlay')
     } else if (key === 'n' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
       openNewWindow()
+    } else if (key === 'r' && !input.shift && input.type === 'keyDown') {
+      event.preventDefault()
+      const tab = activeTab(state)
+      if (tab?.view.webContents) tab.view.webContents.reload()
     } else if (key === 'w' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
       closeTab(state, state.activeTabId)
+    } else if (key === '[' && !input.shift && input.type === 'keyDown') {
+      event.preventDefault()
+      const tab = activeTab(state)
+      if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack()
+    } else if (key === ']' && !input.shift && input.type === 'keyDown') {
+      event.preventDefault()
+      const tab = activeTab(state)
+      if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward()
     } else if (key === '[' && input.shift && input.type === 'keyDown') {
       event.preventDefault()
       const idx = state.tabs.findIndex(t => t.id === state.activeTabId)
@@ -285,6 +314,7 @@ function createWindowState() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      allowFileAccessFromFileUrls: true,
     },
   })
   state.win.contentView.addChildView(state.overlayView)
@@ -300,12 +330,32 @@ function createWindowState() {
 
   state.win.on('resize', () => {
     for (const tab of state.tabs) fitView(state, tab.view)
-    fitOverlay(state)
+    // Only resize overlay if it's currently shown (non-zero bounds)
+    const ob = state.overlayView?.getBounds()
+    if (ob && ob.width > 0 && ob.height > 0) {
+      const wb = state.win.contentView.getBounds()
+      // Full-size overlay (cmd+k open) — resize to match
+      if (ob.width >= wb.width - 20 || ob.height >= wb.height - 20) {
+        fitOverlay(state)
+      }
+      // Small overlay (toast) — leave it, it'll collapse on its own
+    }
   })
 
   state.win.on('focus', () => {
     const tab = activeTab(state)
-    if (tab) tab.view.webContents.focus()
+    // If the overlay is expanded but shouldn't be (e.g. stale toast), collapse it
+    if (tab?.url && state.overlayView) {
+      const ob = state.overlayView.getBounds()
+      const wb = state.win.contentView.getBounds()
+      if (ob.width === wb.width && ob.height === wb.height) {
+        // Overlay is full-size — leave it (user may have cmd+k open)
+      } else if (ob.width > 0) {
+        // Overlay is partially expanded (toast remnant) — collapse
+        state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      }
+      tab.view.webContents.focus()
+    }
   })
 
   state.win.on('closed', () => {
@@ -377,20 +427,32 @@ function switchToTab(state, id) {
 function closeTab(state, id) {
   const idx = state.tabs.findIndex(t => t.id === id)
   if (idx === -1) return
+
+  // Last tab: close the window
+  if (state.tabs.length === 1) {
+    state.win.close()
+    return
+  }
+
   const [removed] = state.tabs.splice(idx, 1)
   state.win.contentView.removeChildView(removed.view)
-  removed.view.webContents.close()
 
-  if (state.tabs.length === 0) {
-    createTab(state, settings.home || '')
-  } else if (state.activeTabId === id) {
-    switchToTab(state, state.tabs[Math.min(idx, state.tabs.length - 1)].id)
+  if (state.activeTabId === id) {
+    const newId = state.tabs[Math.min(idx, state.tabs.length - 1)].id
+    const tab = state.tabs.find(t => t.id === newId)
+    state.activeTabId = newId
+    for (const t of state.tabs) t.view.setVisible(t.id === newId)
+    if (tab) fitView(state, tab.view)
   }
   notifyUI(state)
+
+  // Destroy after notifying UI to avoid race conditions
+  removed.view.webContents.removeAllListeners()
+  removed.view.webContents.close()
 }
 
 function fitView(state, view) {
-  if (!state.win) return
+  if (!state.win || !view || typeof view.setBounds !== 'function') return
   const bounds = state.win.contentView.getBounds()
   view.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height })
 }
@@ -444,8 +506,39 @@ function focusedState() {
   return windows.values().next().value || null
 }
 
+let toastTimers = new WeakMap()
+
+function showToast(state, msg) {
+  if (!state?.overlayView || !state.win) return
+  // Position a small overlay region in the bottom-right for the toast
+  const bounds = state.win.contentView.getBounds()
+  const toastW = 200, toastH = 50
+  state.overlayView.setBounds({
+    x: 16,
+    y: bounds.height - toastH - 16,
+    width: toastW,
+    height: toastH,
+  })
+  state.overlayView.webContents.send('show-toast', msg)
+  // Collapse after toast fades
+  const prev = toastTimers.get(state)
+  if (prev) clearTimeout(prev)
+  toastTimers.set(state, setTimeout(() => {
+    // Only collapse if the overlay isn't actively shown
+    const tab = activeTab(state)
+    if (tab?.url && state.overlayView.getBounds().width < bounds.width) {
+      state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    }
+  }, 2200))
+}
+
 function openNewWindow() {
+  const focused = BrowserWindow.getFocusedWindow()
   const state = createWindowState()
+  if (focused) {
+    const [x, y] = focused.getPosition()
+    state.win.setPosition(x + 20, y + 20)
+  }
   createTab(state, settings.home || '')
   return state
 }
@@ -458,7 +551,7 @@ ipcMain.handle('navigate', (e, url) => {
   if (!tab) return
   let target = url.trim()
   if (!/^https?:\/\//i.test(target) && !target.includes('localhost')) {
-    if (/^[a-z0-9-]+\.[a-z]{2,}/i.test(target)) {
+    if (!target.includes(' ') && /^[a-z0-9-]+\.[a-z]{2,}/i.test(target)) {
       target = 'https://' + target
     } else {
       const searchUrl = (settings.search || 'https://www.google.com/search?q=$s')
@@ -472,14 +565,14 @@ ipcMain.handle('go-back', (e) => {
   const state = stateFromEvent(e)
   if (!state) return
   const tab = activeTab(state)
-  if (tab?.view.webContents.canGoBack()) tab.view.webContents.goBack()
+  if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack()
 })
 
 ipcMain.handle('go-forward', (e) => {
   const state = stateFromEvent(e)
   if (!state) return
   const tab = activeTab(state)
-  if (tab?.view.webContents.canGoForward()) tab.view.webContents.goForward()
+  if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward()
 })
 
 ipcMain.handle('new-tab', (e, url) => {
@@ -526,11 +619,14 @@ ipcMain.handle('set-overlay-visible', (e, visible) => {
 ipcMain.handle('get-settings', () => settings)
 
 ipcMain.handle('save-settings', (e, newSettings) => {
+  const sourceDirChanged = newSettings.source_dir !== settings.source_dir
   saveSettings(newSettings)
-  // Reload overlay in all windows to pick up source_dir change
-  for (const state of windows.values()) {
-    if (state.overlayView) {
-      state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
+  // Only reload overlay if source_dir changed
+  if (sourceDirChanged) {
+    for (const state of windows.values()) {
+      if (state.overlayView) {
+        state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
+      }
     }
   }
 })
@@ -547,13 +643,16 @@ ipcMain.handle('pick-directory', async () => {
 
 ipcMain.handle('eject', (e, targetDir) => {
   try {
-    // Copy both ui/ and sites/ into the target directory
+    // Copy ui/, sites/, and AGENTS.md into the target directory
     copyDirRecursive(BUILTIN_UI, path.join(targetDir, 'ui'))
     copyDirRecursive(BUILTIN_SITES, path.join(targetDir, 'sites'))
+    const agentsSrc = path.join(__dirname, 'AGENTS.md')
+    if (fs.existsSync(agentsSrc)) fs.copyFileSync(agentsSrc, path.join(targetDir, 'AGENTS.md'))
     // Write manifest recording built-in hashes at eject time
     const uiHashes = walkDir(BUILTIN_UI, 'ui')
     const sitesHashes = walkDir(BUILTIN_SITES, 'sites')
     const allHashes = { ...uiHashes, ...sitesHashes }
+    if (fs.existsSync(agentsSrc)) allHashes['AGENTS.md'] = hashFile(agentsSrc)
     const manifest = {
       ejected_at: new Date().toISOString(),
       builtin_version: require('./package.json').version,
@@ -573,20 +672,46 @@ ipcMain.handle('get-update-status', () => checkForUIUpdates())
 
 ipcMain.handle('prepare-update', () => {
   const status = checkForUIUpdates()
-  if (!status.pending) return { success: false, error: 'No updates' }
-  const manifest = {
+  if (!status.pending || !settings.source_dir) return { success: false, error: 'No updates' }
+  const updatePath = path.join(settings.source_dir, 'UPDATE.md')
+  const lines = [
+    '# Pending Update',
+    '',
+    `Generated: ${new Date().toISOString()}`,
+    `Version: ${require('./package.json').version}`,
+    `Source: ${settings.source_dir}`,
+    `Built-in: ${path.join(__dirname)}`,
+    '',
+    '## Changed Files',
+    '',
+    '| File | Status | You Modified |',
+    '|------|--------|--------------|',
+  ]
+  for (const f of status.files) {
+    lines.push(`| ${f.path} | ${f.status} | ${f.user_modified ? 'yes' : 'no'} |`)
+  }
+  lines.push('')
+  lines.push('## How to apply')
+  lines.push('')
+  lines.push('Run `/update-ui` in Claude Code from this directory, or apply manually.')
+  lines.push('After applying, click "Mark as Resolved" in browser settings.')
+  lines.push('')
+  fs.writeFileSync(updatePath, lines.join('\n'))
+  // Also write the machine-readable version for the skill
+  fs.writeFileSync(PENDING_UPDATE_PATH, yaml.dump({
     from_version: require('./package.json').version,
     source_dir: settings.source_dir,
-    builtin_dir: BUILTIN_UI,
+    builtin_dir: path.join(__dirname),
     files: status.files,
-  }
-  fs.writeFileSync(PENDING_UPDATE_PATH, yaml.dump(manifest))
-  return { success: true, path: PENDING_UPDATE_PATH }
+  }))
+  return { success: true, path: updatePath }
 })
 
 ipcMain.handle('finalize-update', () => {
   try {
     const hashes = { ...walkDir(BUILTIN_UI, 'ui'), ...walkDir(BUILTIN_SITES, 'sites') }
+    const agentsSrc = path.join(__dirname, 'AGENTS.md')
+    if (fs.existsSync(agentsSrc)) hashes['AGENTS.md'] = hashFile(agentsSrc)
     const manifest = {
       ejected_at: new Date().toISOString(),
       builtin_version: require('./package.json').version,
@@ -594,6 +719,10 @@ ipcMain.handle('finalize-update', () => {
     }
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
     if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
+    if (settings.source_dir) {
+      const updateMd = path.join(settings.source_dir, 'UPDATE.md')
+      if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
+    }
     return { success: true }
   } catch (err) {
     return { success: false, error: err.message }
@@ -661,16 +790,31 @@ app.on('web-contents-created', (_event, contents) => {
       }
     }
     if (!owner) owner = focusedState()
-    if (owner && targetUrl) createTab(owner, targetUrl)
+    if (owner && targetUrl) {
+      createTab(owner, targetUrl)
+      showToast(owner, 'New tab')
+    }
     return { action: 'deny' }
   })
 })
 
 // ── App lifecycle ──────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  // Remove default menu so its accelerators (Cmd+N, etc.) don't intercept our shortcuts
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => openNewWindow() },
+      ],
+    },
+    { role: 'editMenu' },
+  ]))
   ensureDataDir()
   settings = loadSettings()
   history = loadHistory()
+  applyColorMode()
   openNewWindow()
 })
 

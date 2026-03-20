@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('browser', {
   onShowOverlay:   (cb) => ipcRenderer.on('show-overlay', cb),
   onHideOverlay:   (cb) => ipcRenderer.on('hide-overlay', cb),
   onStateUpdate:   (cb) => ipcRenderer.on('state-update', (_e, state) => cb(state)),
+  onToast:         (cb) => ipcRenderer.on('show-toast', (_e, msg) => cb(msg)),
+  onShowSettings:  (cb) => ipcRenderer.on('show-settings', cb),
 
   getSettings:     ()    => ipcRenderer.invoke('get-settings'),
   saveSettings:    (s)   => ipcRenderer.invoke('save-settings', s),

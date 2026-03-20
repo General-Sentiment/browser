@@ -1,0 +1,10 @@
+/* Hide the right sidebar (trends, who to follow, etc.) */
+[data-testid="sidebarColumn"] {
+  display: none !important;
+}
+
+/* Center the timeline with a comfortable max width */
+[data-testid="primaryColumn"] {
+  max-width: 600px !important;
+  margin: 0 auto !important;
+}

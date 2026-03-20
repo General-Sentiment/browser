@@ -1,4 +1,4 @@
-# browser
+# General Browser
 
 A lightweight Electron browser with no interface. Pages fill the entire window. All controls live behind a single Cmd+K overlay: address bar, tabs, history.
 
@@ -15,15 +15,15 @@ Cmd+K (or Cmd+L) opens the overlay. Type a URL or search query, press Enter. Esc
 
 ## Shortcuts
 
-| Key | Action |
-|-----|--------|
+| Key           | Action         |
+| ------------- | -------------- |
 | Cmd+K / Cmd+L | Toggle overlay |
-| Cmd+T | New tab |
-| Cmd+W | Close tab |
-| Cmd+N | New window |
-| Cmd+Shift+[ | Previous tab |
-| Cmd+Shift+] | Next tab |
-| Escape | Close overlay |
+| Cmd+T         | New tab        |
+| Cmd+W         | Close tab      |
+| Cmd+N         | New window     |
+| Cmd+Shift+[   | Previous tab   |
+| Cmd+Shift+]   | Next tab       |
+| Escape        | Close overlay  |
 
 ## Settings
 

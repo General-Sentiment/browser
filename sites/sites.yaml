@@ -1,17 +1,23 @@
 rules:
   - name: YouTube
-    enabled: false
+    enabled: true
     matches:
-      - "*://www.youtube.com/*"
+      - '*://www.youtube.com/*'
     css:
       - sites/youtube/style.css
     js:
       - sites/youtube/script.js
-
-  - name: Instagram
-    enabled: false
+  - name: Twitter
+    enabled: true
     matches:
-      - "*://www.instagram.com/*"
+      - '*://x.com/*'
+      - '*://twitter.com/*'
+    css:
+      - sites/twitter/style.css
+  - name: Instagram
+    enabled: true
+    matches:
+      - '*://www.instagram.com/*'
     css:
       - sites/instagram/style.css
     js:
