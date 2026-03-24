@@ -98,12 +98,14 @@ export function SettingsView({ onBack }) {
             <span class="settings-update-text">v${appUpdate.version} is available</span>
             ${appUpdate.ready
               ? html`<button class="settings-btn settings-btn-primary" onClick=${() => window.browser.installAppUpdate()}>Restart to Update</button>`
-              : html`<button class="settings-btn settings-btn-primary" disabled=${appUpdate.downloading} onClick=${async () => {
-                  setAppUpdate(u => ({ ...u, downloading: true }))
-                  const result = await window.browser.downloadAppUpdate()
-                  if (result.success) setAppUpdate(u => ({ ...u, downloading: false, ready: true }))
-                  else setAppUpdate(u => ({ ...u, downloading: false }))
-                }}>${appUpdate.downloading ? 'Downloading...' : 'Update'}</button>`
+              : appUpdate.downloading
+                ? html`<button class="settings-btn" disabled>Downloading...</button>`
+                : html`<button class="settings-btn settings-btn-primary" onClick=${async () => {
+                    setAppUpdate(u => ({ ...u, downloading: true }))
+                    const result = await window.browser.downloadAppUpdate()
+                    if (result.success) setAppUpdate(u => ({ ...u, downloading: false, ready: true }))
+                    else setAppUpdate(u => ({ ...u, downloading: false }))
+                  }}>Update</button>`
             }
           </div>
         `}
@@ -137,7 +139,7 @@ export function SettingsView({ onBack }) {
           ${uiPaths.isCustom && html`<div class="settings-value">${settings.source_dir}</div>`}
 
           <div class="settings-actions">
-            <button class="settings-btn" onClick=${() => window.browser.openPath(uiPaths.isCustom ? settings.source_dir : uiPaths.builtin)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? settings.source_dir : uiPaths.builtin)}>Open</button>
             ${!uiPaths.isCustom && html`
               <button class="settings-btn settings-btn-primary" onClick=${pickAndEject}>Eject</button>
             `}
@@ -226,8 +228,8 @@ export function SettingsView({ onBack }) {
           }
 
           <div class="settings-actions">
-            <button class="settings-btn" onClick=${() => window.browser.openSitesDir()}>Open Sites Folder</button>
-            <button class="settings-btn" onClick=${() => window.browser.openSitesConfig()}>Edit Config</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openSitesDir()}>Open Sites Folder</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openSitesConfig()}>Edit Config</button>
           </div>
         </div>
 
