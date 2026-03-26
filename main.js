@@ -680,6 +680,7 @@ ipcMain.handle('save-settings', (e, newSettings) => {
   saveSettings(newSettings)
   // Only reload overlay if source_dir changed
   if (sourceDirChanged) {
+    startWatchers()
     for (const state of windows.values()) {
       if (state.overlayView) {
         state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
@@ -854,6 +855,7 @@ ipcMain.handle('reset-source-dir', () => {
   // Clean up manifest
   if (fs.existsSync(MANIFEST_PATH)) fs.unlinkSync(MANIFEST_PATH)
   if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
+  startWatchers()
   // Reload overlay in all windows from built-in
   for (const state of windows.values()) {
     if (state.overlayView) {
@@ -901,6 +903,55 @@ app.on('web-contents-created', (_event, contents) => {
   })
 })
 
+// ── Live-reload watcher ─────────────────────────────────────────────────────
+let watchers = []
+
+function stopWatchers() {
+  for (const w of watchers) w.close()
+  watchers = []
+}
+
+function startWatchers() {
+  stopWatchers()
+  const dirs = []
+  const uiPath = getUIPath()
+  const sitesPath = getSitesPath()
+  if (uiPath) dirs.push({ dir: uiPath, type: 'ui' })
+  if (sitesPath) dirs.push({ dir: sitesPath, type: 'sites' })
+
+  for (const { dir, type } of dirs) {
+    if (!fs.existsSync(dir)) continue
+    try {
+      const watcher = fs.watch(dir, { recursive: true }, debounce(() => {
+        if (type === 'ui') {
+          for (const state of windows.values()) {
+            if (state.overlayView) {
+              state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
+            }
+          }
+        } else {
+          // sites changed — re-inject CSS/JS on all active tabs
+          for (const state of windows.values()) {
+            for (const tab of state.tabs) {
+              const url = tab.view.webContents.getURL()
+              if (url) injectSiteRules(tab.view.webContents, url)
+            }
+          }
+        }
+      }, 300))
+      watchers.push(watcher)
+    } catch {}
+  }
+}
+
+function debounce(fn, ms) {
+  let timer
+  return (...args) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => fn(...args), ms)
+  }
+}
+
 // ── App lifecycle ──────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   // Remove default menu so its accelerators (Cmd+N, etc.) don't intercept our shortcuts
@@ -944,6 +995,7 @@ app.whenReady().then(() => {
   settings = loadSettings()
   history = loadHistory()
   applyColorMode()
+  startWatchers()
   openNewWindow()
 
   // Handle any URL that arrived before the app was ready
