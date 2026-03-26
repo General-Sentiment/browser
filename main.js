@@ -301,8 +301,13 @@ function registerShortcuts(contents, getState) {
       openNewWindow()
     } else if (key === 'r' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
-      const tab = activeTab(state)
-      if (tab?.view.webContents) tab.view.webContents.reload()
+      const overlayBounds = state.overlayView?.getBounds()
+      if (overlayBounds && overlayBounds.width > 0) {
+        state.overlayView.webContents.reload()
+      } else {
+        const tab = activeTab(state)
+        if (tab?.view.webContents) tab.view.webContents.reload()
+      }
     } else if (key === 'w' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
       closeTab(state, state.activeTabId)
@@ -838,8 +843,9 @@ ipcMain.handle('open-sites-dir', () => {
   shell.openPath(resolveForShell(getSitesPath()))
 })
 
-ipcMain.handle('open-path', (_e, p) => {
-  shell.openPath(resolveForShell(p))
+ipcMain.handle('open-path', async (_e, p) => {
+  const err = await shell.openPath(resolveForShell(p))
+  if (err) console.error('open-path failed:', err, 'path:', p, 'resolved:', resolveForShell(p))
 })
 
 ipcMain.handle('reset-source-dir', () => {

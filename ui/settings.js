@@ -47,23 +47,6 @@ export function SettingsView({ onBack }) {
     }
   }
 
-  const prepareUpdate = async () => {
-    const result = await window.browser.prepareUpdate()
-    if (result.success) {
-      setMessage('UPDATE.md written to your source directory. Open Claude Code there and run /update-ui')
-    } else {
-      setMessage(result.error)
-    }
-  }
-
-  const finalizeUpdate = async () => {
-    const result = await window.browser.finalizeUpdate()
-    if (result.success) {
-      setMessage('Update finalized.')
-      setUpdateStatus({ pending: false })
-    }
-  }
-
   const toggleRule = async (i) => {
     const updated = { ...siteRules, rules: siteRules.rules.map((r, j) =>
       j === i ? { ...r, enabled: !r.enabled } : r
@@ -110,6 +93,18 @@ export function SettingsView({ onBack }) {
           </div>
         `}
 
+        ${updateStatus?.pending && html`
+          <div class="settings-update-banner">
+            <span class="settings-update-text">UI Update Available</span>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? settings.source_dir : uiPaths.builtin)}>Open</button>
+          </div>
+          <p class="settings-hint settings-update-hint">The built-in UI has changed since you ejected. Open your source directory in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
+        `}
+
+        ${(appUpdate?.available || updateStatus?.pending) && html`
+          <hr class="settings-divider" />
+        `}
+
         <div class="settings-field">
           <label class="settings-label">Appearance</label>
           <p class="settings-hint">Choose a color mode for the interface.</p>
@@ -133,7 +128,7 @@ export function SettingsView({ onBack }) {
           <label class="settings-label">Source Directory</label>
           <p class="settings-hint">${uiPaths.isCustom
             ? 'Ejected. The app is loading your customized copy.'
-            : 'Eject to copy the UI and site rules to a directory you control. Edit the files directly or open the folder in Claude Code. Want a feature? Ask for it. Unhappy with something? Ask for it to be changed.'
+            : 'Eject to copy the UI and site rules to a directory you control. Edit the files directly or open the folder in Claude Code.'
           }</p>
 
           ${uiPaths.isCustom && html`<div class="settings-value">${settings.source_dir}</div>`}
@@ -148,26 +143,6 @@ export function SettingsView({ onBack }) {
             `}
           </div>
         </div>
-
-        ${updateStatus?.pending && html`
-          <div class="settings-field">
-            <label class="settings-label">Update Available</label>
-            <p class="settings-hint">Built-in files have changed since you ejected. Files you modified will need merging.</p>
-            <ul class="update-file-list">
-              ${updateStatus.files.map(f => html`
-                <li class="update-file-item">
-                  <span class="update-file-path">${f.path}</span>
-                  <span class="update-file-status ${f.status}">${f.status}</span>
-                  ${f.user_modified && html`<span class="update-file-badge">you modified</span>`}
-                </li>
-              `)}
-            </ul>
-            <div class="settings-actions">
-              <button class="settings-btn settings-btn-primary" onClick=${prepareUpdate}>Prepare Update</button>
-              <button class="settings-btn" onClick=${finalizeUpdate}>Mark as Resolved</button>
-            </div>
-          </div>
-        `}
 
         ${message && html`<div class="settings-message">${message}</div>`}
 
@@ -264,11 +239,7 @@ export function SettingsView({ onBack }) {
               <div class="settings-segmented">
                 ${[
                   ['None', () => setUpdateStatus({ pending: false })],
-                  ['Pending', () => setUpdateStatus({ pending: true, files: [
-                    { path: 'ui/app.js', status: 'changed', user_modified: false },
-                    { path: 'ui/style.css', status: 'changed', user_modified: true },
-                    { path: 'ui/components/toast.js', status: 'added', user_modified: false },
-                  ]})],
+                  ['Pending', () => setUpdateStatus({ pending: true })],
                 ].map(([label, action]) => html`
                   <button class="settings-segment ${
                     label === 'None' && !updateStatus?.pending ? 'active' :
@@ -294,6 +265,19 @@ export function SettingsView({ onBack }) {
             </div>
           </div>
         `}
+
+        <details class="settings-details">
+          <summary class="settings-details-summary">How to install updates</summary>
+          <div class="settings-details-body">
+            <p>Eject the UI to a directory you control, then open that directory in an AI coding agent:</p>
+            <ul>
+              <li><strong>Claude Code</strong> — run <code>/update-ui</code></li>
+              <li><strong>Codex</strong> — ask it to merge upstream changes from the built-in UI</li>
+              <li><strong>Any agent</strong> — point it at your source directory and ask it to update</li>
+            </ul>
+            <p>The agent will diff the built-in files against your customized copies and merge changes, preserving your modifications.</p>
+          </div>
+        </details>
 
         <div class="settings-footer">
           <a class="settings-footer-title" onClick=${(e) => { e.preventDefault(); window.browser.newTab('https://generalsentiment.co/browser'); onBack() }}>General Browser</a>
