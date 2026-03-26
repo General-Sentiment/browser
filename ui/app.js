@@ -205,6 +205,11 @@ function App() {
     } else if (e.key === 'ArrowDown') {
       e.preventDefault()
       setSelectedIdx(i => Math.max(i - 1, -1))
+    } else if (e.key === 'Tab') {
+      if (selectedIdx >= 0 && selectedIdx < filteredHistory.length) {
+        e.preventDefault()
+        setQuery(filteredHistory[selectedIdx].url)
+      }
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const url = selectedIdx >= 0 && selectedIdx < filteredHistory.length
