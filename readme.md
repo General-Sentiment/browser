@@ -2,8 +2,6 @@
 
 A minimal fully modifiable browser with (basically) no interface. Pages fill the entire window. All controls live behind a single Cmd+K overlay: address bar, tabs, history.
 
-Deeply inspired by [Oryoki](https://github.com/thmsbfft/oryoki), which proved that a browser could be reduced to almost nothing and still be everything you need.
-
 **macOS only for now.**
 
 ## Philosophy
@@ -83,3 +81,7 @@ ui/
   lib/           Vendored preact + htm + hooks
 sites/           Default site rules (youtube, instagram)
 ```
+
+---
+
+Deeply inspired by [Oryoki](https://github.com/thmsbfft/oryoki).
