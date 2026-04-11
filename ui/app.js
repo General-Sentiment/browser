@@ -1,15 +1,13 @@
 import { html, render, useState, useEffect, useRef, useCallback, useMemo } from './lib/preact.js'
 import { SettingsView } from './settings.js'
 import { Toast } from './components/toast.js'
-import { TabList } from './components/tab-list.js'
 import { Suggestions } from './components/suggestions.js'
 import { SettingsGear } from './components/settings-gear.js'
 
 function App() {
   const [visible, setVisible] = useState(false)
   const [query, setQuery] = useState('')
-  const [tabs, setTabs] = useState([])
-  const [activeTabId, setActiveTabId] = useState(0)
+  const [currentUrl, setCurrentUrl] = useState('')
   const [history, setHistory] = useState([])
   const [selectedIdx, setSelectedIdx] = useState(-1)
   const [blankTab, _setBlankTab] = useState(false)
@@ -28,12 +26,7 @@ function App() {
     setView('main')
     setSelectedIdx(-1)
     window.browser.getHistory().then(setHistory)
-    window.browser.getTabs().then(s => {
-      setTabs(s.tabs)
-      setActiveTabId(s.activeTabId)
-      const active = s.tabs.find(t => t.id === s.activeTabId)
-      setQuery(active?.url || '')
-    })
+    setQuery(currentUrl)
   }
 
   useEffect(() => {
@@ -74,10 +67,8 @@ function App() {
       setVisible(false)
     })
     window.browser.onStateUpdate(state => {
-      setTabs(state.tabs)
-      setActiveTabId(state.activeTabId)
-      const active = state.tabs.find(t => t.id === state.activeTabId)
-      setBlankTab(!active || !active.url)
+      setCurrentUrl(state.url || '')
+      setBlankTab(!state.url)
     })
     window.browser.onShowSettings(() => {
       setVisible(true)
@@ -159,9 +150,8 @@ function App() {
   const isTyping = useMemo(() => {
     const q = query.trim()
     if (!q) return false
-    const active = tabs.find(t => t.id === activeTabId)
-    return q !== (active?.url || '')
-  }, [query, tabs, activeTabId])
+    return q !== currentUrl
+  }, [query, currentUrl])
 
   const filteredHistory = useMemo(() => {
     if (!isTyping) return []
@@ -232,12 +222,7 @@ function App() {
         ? filteredHistory[selectedIdx].url
         : query.trim()
       if (!url) return
-      if (e.shiftKey) {
-        window.browser.newTab()
-        setTimeout(() => { window.browser.navigate(url) }, 100)
-        setVisible(false)
-        window.browser.setOverlayVisible(false)
-      } else if (selectedIdx >= 0) {
+      if (selectedIdx >= 0) {
         dismissAndNavigate(url)
       } else {
         submit()
@@ -256,10 +241,6 @@ function App() {
           : html`
             <div class="overlay-body">
               <${SettingsGear} onClick=${() => setView('settings')} />
-
-              <div class="overlay-top">
-                <${TabList} tabs=${tabs} activeTabId=${activeTabId} />
-              </div>
 
               <div class="overlay-bottom">
                 <div class="overlay-input-wrap">

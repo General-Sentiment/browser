@@ -4,10 +4,6 @@ contextBridge.exposeInMainWorld('browser', {
   navigate:   (url) => ipcRenderer.invoke('navigate', url),
   back:       ()    => ipcRenderer.invoke('go-back'),
   forward:    ()    => ipcRenderer.invoke('go-forward'),
-  newTab:     (url) => ipcRenderer.invoke('new-tab', url),
-  closeTab:   (id)  => ipcRenderer.invoke('close-tab', id),
-  switchTab:  (id)  => ipcRenderer.invoke('switch-tab', id),
-  getTabs:    ()    => ipcRenderer.invoke('get-tabs'),
   getHistory: ()    => ipcRenderer.invoke('get-history'),
 
   setOverlayVisible: (v) => ipcRenderer.invoke('set-overlay-visible', v),

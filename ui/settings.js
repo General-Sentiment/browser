@@ -280,8 +280,8 @@ export function SettingsView({ onBack }) {
         </details>
 
         <div class="settings-footer">
-          <a class="settings-footer-title" onClick=${(e) => { e.preventDefault(); window.browser.newTab('https://generalsentiment.co/browser'); onBack() }}>General Browser</a>
-          <span class="settings-footer-credit">by <a onClick=${(e) => { e.preventDefault(); window.browser.newTab('https://generalsentiment.co'); onBack() }}>General Sentiment</a></span>
+          <a class="settings-footer-title" onClick=${(e) => { e.preventDefault(); window.browser.navigate('https://generalsentiment.co/browser'); onBack() }}>General Browser</a>
+          <span class="settings-footer-credit">by <a onClick=${(e) => { e.preventDefault(); window.browser.navigate('https://generalsentiment.co'); onBack() }}>General Sentiment</a></span>
           ${appVersion && html`<span class="settings-footer-version">v${appVersion}</span>`}
         </div>
       </div>

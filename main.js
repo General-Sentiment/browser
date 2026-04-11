@@ -29,14 +29,11 @@ app.on('open-url', (event, url) => {
 function openUrlInBrowser(url) {
   const state = focusedState() || (windows.size > 0 ? windows.values().next().value : null)
   if (state) {
-    createTab(state, url)
+    state.view.webContents.loadURL(url)
     state.win.show()
     state.win.focus()
   } else {
-    const newState = openNewWindow()
-    // Replace the default home tab with the requested URL
-    const tab = newState.tabs[0]
-    if (tab) tab.view.webContents.loadURL(url)
+    openNewWindow(url)
   }
 }
 
@@ -85,7 +82,6 @@ function loadSettings() {
 // ── Shared state ───────────────────────────────────────────────────────────────
 let history = []
 let settings = {}
-let nextTabId = 1
 const windows = new Map()  // webContentsId -> WindowState
 
 function loadHistory() {
@@ -293,10 +289,7 @@ function registerShortcuts(contents, getState) {
     } else if ((key === 'k' || key === 'l' || key === ';') && input.type === 'keyDown') {
       event.preventDefault()
       if (state.overlayView) state.overlayView.webContents.send('toggle-overlay')
-    } else if (key === 't' && !input.shift && input.type === 'keyDown') {
-      event.preventDefault()
-      createTab(state, '')
-    } else if (key === 'n' && !input.shift && input.type === 'keyDown') {
+    } else if ((key === 't' || key === 'n') && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
       openNewWindow()
     } else if (key === 'r' && !input.shift && input.type === 'keyDown') {
@@ -304,29 +297,18 @@ function registerShortcuts(contents, getState) {
       const overlayBounds = state.overlayView?.getBounds()
       if (overlayBounds && overlayBounds.width > 0) {
         state.overlayView.webContents.reload()
-      } else {
-        const tab = activeTab(state)
-        if (tab?.view.webContents) tab.view.webContents.reload()
+      } else if (state.view?.webContents) {
+        state.view.webContents.reload()
       }
     } else if (key === 'w' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
-      closeTab(state, state.activeTabId)
+      state.win.close()
     } else if (key === '[' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
-      const tab = activeTab(state)
-      if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack()
+      if (state.view?.webContents.navigationHistory.canGoBack()) state.view.webContents.navigationHistory.goBack()
     } else if (key === ']' && !input.shift && input.type === 'keyDown') {
       event.preventDefault()
-      const tab = activeTab(state)
-      if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward()
-    } else if (key === '[' && input.shift && input.type === 'keyDown') {
-      event.preventDefault()
-      const idx = state.tabs.findIndex(t => t.id === state.activeTabId)
-      if (idx > 0) switchToTab(state, state.tabs[idx - 1].id)
-    } else if (key === ']' && input.shift && input.type === 'keyDown') {
-      event.preventDefault()
-      const idx = state.tabs.findIndex(t => t.id === state.activeTabId)
-      if (idx < state.tabs.length - 1) switchToTab(state, state.tabs[idx + 1].id)
+      if (state.view?.webContents.navigationHistory.canGoForward()) state.view.webContents.navigationHistory.goForward()
     }
   })
 }
@@ -335,8 +317,9 @@ function createWindowState() {
   const state = {
     win: null,
     overlayView: null,
-    tabs: [],
-    activeTabId: 0,
+    view: null,
+    url: '',
+    title: '',
   }
 
   // ── Window ─────────────────────────────────────────────────────────────────
@@ -351,6 +334,35 @@ function createWindowState() {
     icon: path.join(__dirname, 'assets', 'icon.png'),
   })
 
+  // ── Page view ──────────────────────────────────────────────────────────────
+  state.view = new WebContentsView({
+    webPreferences: { contextIsolation: true, sandbox: true },
+  })
+  state.view.setBackgroundColor('#ffffff')
+  state.win.contentView.addChildView(state.view)
+  fitView(state, state.view)
+  registerShortcuts(state.view.webContents, () => state)
+
+  state.view.webContents.on('did-navigate', (_e, navUrl) => {
+    state.url = navUrl
+    state.title = state.view.webContents.getTitle() || navUrl
+    addToHistory(navUrl, state.title)
+    notifyUI(state)
+  })
+  state.view.webContents.on('did-finish-load', () => {
+    const url = state.view.webContents.getURL()
+    if (url) injectSiteRules(state.view.webContents, url)
+  })
+  state.view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
+    state.url = navUrl
+    notifyUI(state)
+  })
+  state.view.webContents.on('page-title-updated', (_e, title) => {
+    state.title = title
+    notifyUI(state)
+  })
+
+  // ── Overlay ────────────────────────────────────────────────────────────────
   state.overlayView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -364,39 +376,30 @@ function createWindowState() {
   state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
   state.overlayView.setBackgroundColor('#00000000')
 
-  // Register shortcuts on the overlay webContents
   registerShortcuts(state.overlayView.webContents, () => state)
-
-  // Register this window's overlay webContents for IPC lookup
   windows.set(state.overlayView.webContents.id, state)
 
   state.win.on('resize', () => {
-    for (const tab of state.tabs) fitView(state, tab.view)
-    // Only resize overlay if it's currently shown (non-zero bounds)
+    fitView(state, state.view)
     const ob = state.overlayView?.getBounds()
     if (ob && ob.width > 0 && ob.height > 0) {
       const wb = state.win.contentView.getBounds()
-      // Full-size overlay (cmd+k open) — resize to match
       if (ob.width >= wb.width - 20 || ob.height >= wb.height - 20) {
         fitOverlay(state)
       }
-      // Small overlay (toast) — leave it, it'll collapse on its own
     }
   })
 
   state.win.on('focus', () => {
-    const tab = activeTab(state)
-    // If the overlay is expanded but shouldn't be (e.g. stale toast), collapse it
-    if (tab?.url && state.overlayView) {
+    if (state.url && state.overlayView) {
       const ob = state.overlayView.getBounds()
       const wb = state.win.contentView.getBounds()
       if (ob.width === wb.width && ob.height === wb.height) {
-        // Overlay is full-size — leave it (user may have cmd+k open)
+        // Overlay is full-size — leave it
       } else if (ob.width > 0) {
-        // Overlay is partially expanded (toast remnant) — collapse
         state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       }
-      tab.view.webContents.focus()
+      state.view.webContents.focus()
     }
   })
 
@@ -412,102 +415,6 @@ function createWindowState() {
   return state
 }
 
-// ── Tab operations (scoped to a window state) ────────────────────────────────
-function createTab(state, url) {
-  const id = nextTabId++
-  const view = new WebContentsView({
-    webPreferences: { contextIsolation: true, sandbox: true },
-  })
-  view.setBackgroundColor('#ffffff')
-  state.win.contentView.addChildView(view)
-  fitView(state, view)
-  if (state.overlayView) state.win.contentView.addChildView(state.overlayView)
-  registerShortcuts(view.webContents, () => state)
-
-  const tab = { id, view, title: 'New Tab', url: url || '', favicon: '' }
-  state.tabs.push(tab)
-
-  view.webContents.on('did-navigate', (_e, navUrl) => {
-    tab.url = navUrl
-    tab.title = view.webContents.getTitle() || navUrl
-    addToHistory(navUrl, tab.title)
-    notifyUI(state)
-  })
-  view.webContents.on('did-finish-load', () => {
-    const url = view.webContents.getURL()
-    if (url) injectSiteRules(view.webContents, url)
-  })
-  view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
-    tab.url = navUrl
-    notifyUI(state)
-  })
-  view.webContents.on('page-title-updated', (_e, title) => {
-    tab.title = title
-    notifyUI(state)
-  })
-  view.webContents.on('page-favicon-updated', (_e, favicons) => {
-    tab.favicon = favicons[0] || ''
-    notifyUI(state)
-  })
-
-  if (url) {
-    view.webContents.loadURL(url)
-    // Switch without showing overlay since page is loading
-    state.activeTabId = id
-    for (const t of state.tabs) t.view.setVisible(t.id === id)
-    fitView(state, view)
-    notifyUI(state)
-    // Hide overlay if it was open
-    if (state.overlayView) {
-      state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-      state.win.setWindowButtonPosition({ x: -20, y: -20 })
-      state.overlayView.webContents.send('hide-overlay')
-      view.webContents.focus()
-    }
-  } else {
-    switchToTab(state, id)
-    showOverlayIfBlank(state)
-  }
-  return id
-}
-
-function switchToTab(state, id) {
-  const tab = state.tabs.find(t => t.id === id)
-  if (!tab) return
-  state.activeTabId = id
-  for (const t of state.tabs) t.view.setVisible(t.id === id)
-  fitView(state, tab.view)
-  notifyUI(state)
-  showOverlayIfBlank(state)
-}
-
-function closeTab(state, id) {
-  const idx = state.tabs.findIndex(t => t.id === id)
-  if (idx === -1) return
-
-  // Last tab: close the window
-  if (state.tabs.length === 1) {
-    state.win.close()
-    return
-  }
-
-  const [removed] = state.tabs.splice(idx, 1)
-  state.win.contentView.removeChildView(removed.view)
-
-  if (state.activeTabId === id) {
-    const newId = state.tabs[Math.min(idx, state.tabs.length - 1)].id
-    const tab = state.tabs.find(t => t.id === newId)
-    state.activeTabId = newId
-    for (const t of state.tabs) t.view.setVisible(t.id === newId)
-    if (tab) fitView(state, tab.view)
-  }
-  notifyUI(state)
-
-  // Destroy after notifying UI to avoid race conditions
-  removed.view.webContents.removeAllListeners()
-  removed.view.webContents.close()
-}
-
 function fitView(state, view) {
   if (!state.win || !view || typeof view.setBounds !== 'function') return
   const bounds = state.win.contentView.getBounds()
@@ -520,21 +427,16 @@ function fitOverlay(state) {
   state.overlayView.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height })
 }
 
-function activeTab(state) {
-  return state.tabs.find(t => t.id === state.activeTabId)
-}
-
 function notifyUI(state) {
   if (!state.overlayView) return
   state.overlayView.webContents.send('state-update', {
-    tabs: state.tabs.map(t => ({ id: t.id, title: t.title, url: t.url, favicon: t.favicon })),
-    activeTabId: state.activeTabId,
+    url: state.url,
+    title: state.title,
   })
 }
 
 function showOverlayIfBlank(state) {
-  const tab = activeTab(state)
-  if (!tab || !tab.url) {
+  if (!state.url) {
     if (state.overlayView) {
       fitOverlay(state)
       state.overlayView.webContents.focus()
@@ -546,7 +448,7 @@ function showOverlayIfBlank(state) {
       state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       state.win.setWindowButtonPosition({ x: -20, y: -20 })
       state.overlayView.webContents.send('hide-overlay')
-      if (tab) tab.view.webContents.focus()
+      state.view.webContents.focus()
     }
   }
 }
@@ -563,40 +465,18 @@ function focusedState() {
   return windows.values().next().value || null
 }
 
-let toastTimers = new WeakMap()
-
-function showToast(state, msg) {
-  if (!state?.overlayView || !state.win) return
-  // Position a small overlay region in the bottom-right for the toast
-  const bounds = state.win.contentView.getBounds()
-  const toastW = 250, toastH = 64
-  state.overlayView.setBounds({
-    x: bounds.width - toastW,
-    y: bounds.height - toastH,
-    width: toastW,
-    height: toastH,
-  })
-  state.overlayView.webContents.send('show-toast', msg)
-  // Collapse after toast fades
-  const prev = toastTimers.get(state)
-  if (prev) clearTimeout(prev)
-  toastTimers.set(state, setTimeout(() => {
-    // Only collapse if the overlay isn't actively shown
-    const tab = activeTab(state)
-    if (tab?.url && state.overlayView.getBounds().width < bounds.width) {
-      state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    }
-  }, 2200))
-}
-
-function openNewWindow() {
+function openNewWindow(url) {
   const focused = BrowserWindow.getFocusedWindow()
   const state = createWindowState()
   if (focused) {
     const [x, y] = focused.getPosition()
     state.win.setPosition(x + 20, y + 20)
   }
-  createTab(state, settings.home || '')
+  const target = url ?? settings.home ?? ''
+  if (target) {
+    state.view.webContents.loadURL(target)
+    state.url = target
+  }
   return state
 }
 
@@ -604,8 +484,6 @@ function openNewWindow() {
 ipcMain.handle('navigate', (e, url) => {
   const state = stateFromEvent(e)
   if (!state) return
-  const tab = activeTab(state)
-  if (!tab) return
   let target = url.trim()
   if (!/^https?:\/\//i.test(target) && !target.includes('localhost')) {
     if (!target.includes(' ') && /^[a-z0-9-]+\.[a-z]{2,}/i.test(target)) {
@@ -615,45 +493,19 @@ ipcMain.handle('navigate', (e, url) => {
       target = searchUrl.replace('$s', encodeURIComponent(target))
     }
   }
-  tab.view.webContents.loadURL(target)
+  state.view.webContents.loadURL(target)
 })
 
 ipcMain.handle('go-back', (e) => {
   const state = stateFromEvent(e)
   if (!state) return
-  const tab = activeTab(state)
-  if (tab?.view.webContents.navigationHistory.canGoBack()) tab.view.webContents.navigationHistory.goBack()
+  if (state.view.webContents.navigationHistory.canGoBack()) state.view.webContents.navigationHistory.goBack()
 })
 
 ipcMain.handle('go-forward', (e) => {
   const state = stateFromEvent(e)
   if (!state) return
-  const tab = activeTab(state)
-  if (tab?.view.webContents.navigationHistory.canGoForward()) tab.view.webContents.navigationHistory.goForward()
-})
-
-ipcMain.handle('new-tab', (e, url) => {
-  const state = stateFromEvent(e)
-  if (state) createTab(state, url || '')
-})
-
-ipcMain.handle('close-tab', (e, id) => {
-  const state = stateFromEvent(e)
-  if (state) closeTab(state, id ?? state.activeTabId)
-})
-
-ipcMain.handle('switch-tab', (e, id) => {
-  const state = stateFromEvent(e)
-  if (state) switchToTab(state, id)
-})
-
-ipcMain.handle('get-tabs', (e) => {
-  const state = stateFromEvent(e)
-  if (!state) return { tabs: [], activeTabId: 0 }
-  return {
-    tabs: state.tabs.map(t => ({ id: t.id, title: t.title, url: t.url, favicon: t.favicon })),
-    activeTabId: state.activeTabId,
-  }
+  if (state.view.webContents.navigationHistory.canGoForward()) state.view.webContents.navigationHistory.goForward()
 })
 
 ipcMain.handle('get-history', () => history)
@@ -677,8 +529,7 @@ ipcMain.handle('set-overlay-visible', (e, visible) => {
   } else {
     state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
     state.win.setWindowButtonPosition({ x: -20, y: -20 })
-    const tab = activeTab(state)
-    if (tab) tab.view.webContents.focus()
+    state.view.webContents.focus()
   }
 })
 
@@ -892,22 +743,10 @@ ipcMain.handle('get-ui-paths', () => ({
   isCustom: !!settings.source_dir,
 }))
 
-// ── Catch-all: redirect any new window into a tab ─────────────────────────────
+// ── Catch-all: redirect window.open into a new window ───────────────────────
 app.on('web-contents-created', (_event, contents) => {
   contents.setWindowOpenHandler(({ url: targetUrl }) => {
-    // Find which window state owns this webContents
-    let owner = null
-    for (const state of windows.values()) {
-      if (state.tabs.some(t => t.view.webContents.id === contents.id)) {
-        owner = state
-        break
-      }
-    }
-    if (!owner) owner = focusedState()
-    if (owner && targetUrl) {
-      createTab(owner, targetUrl)
-      showToast(owner, 'New tab')
-    }
+    if (targetUrl) openNewWindow(targetUrl)
     return { action: 'deny' }
   })
 })
@@ -950,12 +789,10 @@ function startWatchers() {
             state.overlayView.webContents.send('source-changed')
           }
         } else {
-          // sites changed — re-inject CSS/JS on all active tabs
+          // sites changed — re-inject CSS/JS on all windows
           for (const state of windows.values()) {
-            for (const tab of state.tabs) {
-              const url = tab.view.webContents.getURL()
-              if (url) injectSiteRules(tab.view.webContents, url)
-            }
+            const url = state.view?.webContents.getURL()
+            if (url) injectSiteRules(state.view.webContents, url)
           }
         }
       }, 300))
