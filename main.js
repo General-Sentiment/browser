@@ -353,6 +353,17 @@ function createWindowState() {
     const url = state.view.webContents.getURL()
     if (url) injectSiteRules(state.view.webContents, url)
   })
+  state.view.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // ERR_ABORTED (-3) fires during normal navigation; ignore it.
+    if (!isMainFrame || errorCode === -3) return
+    const errorPage = path.join(getUIPath(), 'error.html')
+    const params = new URLSearchParams({
+      url: validatedURL || '',
+      code: String(errorCode),
+      desc: errorDescription || '',
+    })
+    state.view.webContents.loadURL('file://' + errorPage + '?' + params.toString())
+  })
   state.view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
     state.url = navUrl
     notifyUI(state)
