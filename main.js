@@ -6,10 +6,13 @@ const crypto = require('crypto')
 const yaml = require('js-yaml')
 
 // ── Protocol registration ────────────────────────────────────────────────────
-// Only register protocols in packaged builds so macOS delivers open-url events
-// when the user has already chosen this app as their default browser.
-// Omitting this avoids the "switch default browser?" prompt on launch.
-
+// Register in packaged builds so macOS lists the app in default browser settings.
+// process.defaultApp is true during `electron .` dev runs — skip there to avoid
+// the "switch default browser?" prompt.
+if (!process.defaultApp) {
+  app.setAsDefaultProtocolClient('http')
+  app.setAsDefaultProtocolClient('https')
+}
 
 // Buffer for URLs received before the app is ready
 let pendingUrl = null
