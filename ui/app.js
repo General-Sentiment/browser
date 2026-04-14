@@ -7,7 +7,9 @@ import { SettingsGear } from './components/settings-gear.js'
 function App() {
   const [visible, setVisible] = useState(false)
   const [query, setQuery] = useState('')
-  const [currentUrl, setCurrentUrl] = useState('')
+  const [currentUrl, _setCurrentUrl] = useState('')
+  const currentUrlRef = useRef('')
+  const setCurrentUrl = (v) => { currentUrlRef.current = v; _setCurrentUrl(v) }
   const [history, setHistory] = useState([])
   const [selectedIdx, setSelectedIdx] = useState(-1)
   const [blankTab, _setBlankTab] = useState(false)
@@ -26,7 +28,7 @@ function App() {
     setView('main')
     setSelectedIdx(-1)
     window.browser.getHistory().then(setHistory)
-    setQuery(currentUrl)
+    setQuery(currentUrlRef.current)
   }
 
   useEffect(() => {

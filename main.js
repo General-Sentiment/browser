@@ -5,13 +5,11 @@ const fs = require('fs')
 const crypto = require('crypto')
 const yaml = require('js-yaml')
 
-// ── Protocol registration (for open-url events when already default) ────────
-// Does NOT prompt the user or steal default browser status — just registers
-// the app so macOS delivers open-url events if the user has already chosen it.
-if (!process.defaultApp) {
-  app.setAsDefaultProtocolClient('http')
-  app.setAsDefaultProtocolClient('https')
-}
+// ── Protocol registration ────────────────────────────────────────────────────
+// Only register protocols in packaged builds so macOS delivers open-url events
+// when the user has already chosen this app as their default browser.
+// Omitting this avoids the "switch default browser?" prompt on launch.
+
 
 // Buffer for URLs received before the app is ready
 let pendingUrl = null
@@ -43,6 +41,7 @@ const SETTINGS_PATH = path.join(DATA_DIR, 'settings.yml')
 const HISTORY_PATH = path.join(DATA_DIR, 'history.json')
 const MANIFEST_PATH = path.join(DATA_DIR, 'ui-manifest.json')
 const PENDING_UPDATE_PATH = path.join(DATA_DIR, 'pending-update.yml')
+const WINDOW_STATE_PATH = path.join(DATA_DIR, 'window-state.json')
 const BUILTIN_UI = path.join(__dirname, 'ui')
 const BUILTIN_SITES = path.join(__dirname, 'sites')
 
@@ -82,7 +81,17 @@ function loadSettings() {
 // ── Shared state ───────────────────────────────────────────────────────────────
 let history = []
 let settings = {}
+let lastWindowBounds = null
 const windows = new Map()  // webContentsId -> WindowState
+
+function loadWindowState() {
+  try { return JSON.parse(fs.readFileSync(WINDOW_STATE_PATH, 'utf8')) } catch { return null }
+}
+
+function saveWindowState(bounds) {
+  lastWindowBounds = bounds
+  fs.writeFileSync(WINDOW_STATE_PATH, JSON.stringify(bounds))
+}
 
 function loadHistory() {
   try {
@@ -323,9 +332,10 @@ function createWindowState() {
   }
 
   // ── Window ─────────────────────────────────────────────────────────────────
+  const saved = lastWindowBounds || loadWindowState()
   state.win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: saved?.width || 1200,
+    height: saved?.height || 800,
     minWidth: 414,
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
@@ -390,6 +400,10 @@ function createWindowState() {
   registerShortcuts(state.overlayView.webContents, () => state)
   windows.set(state.overlayView.webContents.id, state)
 
+  const saveBounds = debounce(() => {
+    if (state.win && !state.win.isDestroyed()) saveWindowState(state.win.getBounds())
+  }, 500)
+
   state.win.on('resize', () => {
     fitView(state, state.view)
     const ob = state.overlayView?.getBounds()
@@ -399,7 +413,10 @@ function createWindowState() {
         fitOverlay(state)
       }
     }
+    saveBounds()
   })
+
+  state.win.on('move', saveBounds)
 
   state.win.on('focus', () => {
     if (state.url && state.overlayView) {
@@ -482,6 +499,8 @@ function openNewWindow(url) {
   if (focused) {
     const [x, y] = focused.getPosition()
     state.win.setPosition(x + 20, y + 20)
+  } else if (lastWindowBounds) {
+    state.win.setPosition(lastWindowBounds.x, lastWindowBounds.y)
   }
   const target = url ?? settings.home ?? ''
   if (target) {
