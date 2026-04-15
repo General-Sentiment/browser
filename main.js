@@ -28,13 +28,12 @@ app.on('open-url', (event, url) => {
 })
 
 function openUrlInBrowser(url) {
-  const state = focusedState() || (windows.size > 0 ? windows.values().next().value : null)
-  if (state) {
-    state.view.webContents.loadURL(url)
+  // External URLs (Mail, other apps, x-callback) always get a fresh window
+  // rather than clobbering whatever the user is currently looking at.
+  const state = openNewWindow(url)
+  if (state?.win) {
     state.win.show()
     state.win.focus()
-  } else {
-    openNewWindow(url)
   }
 }
 
@@ -989,12 +988,14 @@ app.whenReady().then(() => {
   history = loadHistory()
   applyColorMode()
   startWatchers()
-  openNewWindow()
 
-  // Handle any URL that arrived before the app was ready
+  // If the OS launched us to handle a URL (click from Mail etc.), open only
+  // that window. Otherwise open a fresh home window.
   if (pendingUrl) {
-    openUrlInBrowser(pendingUrl)
+    openNewWindow(pendingUrl)
     pendingUrl = null
+  } else {
+    openNewWindow()
   }
 
   // ── Auto-update (shell updates via GitHub Releases) ───────────────────────────
