@@ -452,7 +452,7 @@ function registerShortcuts(contents, getState) {
   })
 }
 
-function createWindowState() {
+function createWindowState({ showOverlay = false } = {}) {
   const state = {
     win: null,
     overlayView: null,
@@ -463,25 +463,34 @@ function createWindowState() {
 
   // ── Window ─────────────────────────────────────────────────────────────────
   const saved = lastWindowBounds || loadWindowState()
+  // Pick the final traffic-light position up front. Setting it via the
+  // constructor alone is unreliable — macOS paints them at the default
+  // position first and then our value "takes", causing a visible shift.
+  const buttonPosition = showOverlay ? { x: 12, y: 12 } : { x: -20, y: -20 }
   state.win = new BrowserWindow({
     width: saved?.width || 1200,
     height: saved?.height || 800,
     minWidth: 414,
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
-    windowButtonPosition: { x: -20, y: -20 },
+    windowButtonPosition: buttonPosition,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#000' : '#fff',
     icon: path.join(__dirname, 'assets', 'icon.png'),
   })
+  state.win.setWindowButtonPosition(buttonPosition)
 
   // ── Page view ──────────────────────────────────────────────────────────────
   state.view = new WebContentsView({
     webPreferences: { contextIsolation: true, sandbox: true },
   })
-  // Match the window's theme so dark mode doesn't flash white before the page paints.
-  state.view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff')
+  // Pages without an explicit background rely on the browser defaulting to white.
+  // Keep the view white — but to avoid flashing white over the dark window before
+  // anything has loaded, hold the view at zero bounds until it begins loading a
+  // page. Until then the BrowserWindow's theme-matched background shows through.
+  state.view.setBackgroundColor('#ffffff')
+  state.view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
   state.win.contentView.addChildView(state.view)
-  fitView(state, state.view)
+  state.view.webContents.once('did-start-loading', () => fitView(state, state.view))
   registerShortcuts(state.view.webContents, () => state)
 
   state.view.webContents.on('did-navigate', (_e, navUrl) => {
@@ -626,14 +635,14 @@ function focusedState() {
 
 function openNewWindow(url) {
   const focused = BrowserWindow.getFocusedWindow()
-  const state = createWindowState()
+  const target = url ?? settings.home ?? ''
+  const state = createWindowState({ showOverlay: !target })
   if (focused) {
     const [x, y] = focused.getPosition()
     state.win.setPosition(x + 20, y + 20)
   } else if (lastWindowBounds) {
     state.win.setPosition(lastWindowBounds.x, lastWindowBounds.y)
   }
-  const target = url ?? settings.home ?? ''
   if (target) {
     state.view.webContents.loadURL(target)
     state.url = target

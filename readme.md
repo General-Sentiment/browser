@@ -16,16 +16,16 @@ Cmd+K (or Cmd+L) opens the overlay. Type a URL or search query, press Enter. Esc
 
 ## Shortcuts
 
-| Key                   | Action           |
-| --------------------- | ---------------- |
-| Cmd+K / Cmd+L / Cmd+; | Toggle overlay   |
-| Cmd+,                 | Settings         |
-| Cmd+T / Cmd+N         | New window       |
-| Cmd+W                 | Close window     |
-| Cmd+R                 | Reload           |
-| Cmd+[                 | Back             |
-| Cmd+]                 | Forward          |
-| Escape                | Close overlay    |
+| Key                   | Action         |
+| --------------------- | -------------- |
+| Cmd+K / Cmd+L / Cmd+; | Toggle overlay |
+| Cmd+,                 | Settings       |
+| Cmd+T / Cmd+N         | New window     |
+| Cmd+W                 | Close window   |
+| Cmd+R                 | Reload         |
+| Cmd+[                 | Back           |
+| Cmd+]                 | Forward        |
+| Escape                | Close overlay  |
 
 ## User data
 
