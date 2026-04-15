@@ -5,7 +5,7 @@ description: Apply a pending browser UI update, merging upstream changes with us
 
 # /update-ui
 
-Read the `AGENTS.md` file in the current directory for full instructions under "Applying Updates". Then read `UPDATE.md` for the list of changed files. The machine-readable manifest is at `~/.browser/pending-update.yml`.
+Read the `AGENTS.md` file in the current directory for full instructions under "Applying Updates". Then read `UPDATE.md` for the list of changed files. The machine-readable manifest is at `~/.general-browser/pending-update.yml`.
 
 Follow this workflow:
 

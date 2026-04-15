@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, dialog, nativeTheme, Menu, shell } = require('electron')
+const { app, BrowserWindow, WebContentsView, ipcMain, nativeTheme, Menu, shell } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const path = require('path')
 const fs = require('fs')
@@ -39,17 +39,24 @@ function openUrlInBrowser(url) {
 }
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
-const DATA_DIR = path.join(require('os').homedir(), '.browser')
+const HOME = require('os').homedir()
+const LEGACY_DATA_DIR = path.join(HOME, '.browser')
+const DATA_DIR = path.join(HOME, '.general-browser')
+const SITES_DIR = path.join(DATA_DIR, 'sites')
+const SOURCES_DIR = path.join(DATA_DIR, 'sources')
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.yml')
 const HISTORY_PATH = path.join(DATA_DIR, 'history.json')
 const MANIFEST_PATH = path.join(DATA_DIR, 'ui-manifest.json')
 const PENDING_UPDATE_PATH = path.join(DATA_DIR, 'pending-update.yml')
 const WINDOW_STATE_PATH = path.join(DATA_DIR, 'window-state.json')
+const ROOT_AGENTS_PATH = path.join(DATA_DIR, 'AGENTS.md')
+const SITES_AGENTS_PATH = path.join(SITES_DIR, 'AGENTS.md')
+const SOURCES_AGENTS_PATH = path.join(SOURCES_DIR, 'AGENTS.md')
 const BUILTIN_UI = path.join(__dirname, 'ui')
 const BUILTIN_SITES = path.join(__dirname, 'sites')
 
 // ── Settings ───────────────────────────────────────────────────────────────────
-const DEFAULT_SETTINGS_YML = `# ~/.browser/settings.yml
+const DEFAULT_SETTINGS_YML = `# ~/.general-browser/settings.yml
 
 # Start page (blank if omitted)
 # home: https://example.com
@@ -59,23 +66,152 @@ search: https://www.google.com/search?q=$s
 
 # Color mode: system, light, or dark
 # color_mode: system
-
-# Source directory — eject here to customize the browser
-# Copies both ui/ and sites/ into your directory
-# source_dir: /path/to/my-browser
 `
 
-function ensureDataDir() {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  if (!fs.existsSync(SETTINGS_PATH)) {
-    fs.writeFileSync(SETTINGS_PATH, DEFAULT_SETTINGS_YML)
+const ROOT_AGENTS_MD = `# General Browser — User Data
+
+This directory holds your General Browser configuration, site rules, and (optionally) the ejected browser UI source.
+
+The browser is a minimal, fully modifiable shell. Everything the user can customize lives here.
+
+## Structure
+
+- [sites/](sites/AGENTS.md) — site rules: custom CSS/JS injected into pages by URL pattern.
+- [sources/](sources/AGENTS.md) — ejected browser UI source (empty until ejected from Settings).
+- \`settings.yml\` — browser preferences (start page, search engine, color mode).
+- \`history.json\` — recent browsing history (up to 1000 entries).
+- \`window-state.json\` — last window size and position.
+
+When editing anything in this directory, read the AGENTS.md in the relevant subdirectory first.
+`
+
+const SITES_AGENTS_MD = `# Site Rules
+
+This directory holds site rules: custom CSS and JS that General Browser injects into pages matched by URL pattern.
+
+## sites.yaml
+
+Rules live in \`sites.yaml\`:
+
+\`\`\`yaml
+rules:
+  - name: YouTube
+    enabled: true
+    matches:
+      - "*://www.youtube.com/*"
+    css:
+      - sites/youtube/style.css
+    js:
+      - sites/youtube/script.js
+\`\`\`
+
+- \`matches\` use glob patterns; \`*\` matches any characters.
+- \`css\` / \`js\` paths are relative to \`~/.general-browser/\` (so they begin with \`sites/\`).
+- CSS is injected after page load. Use \`!important\` to override site styles.
+- JS runs in the page's main world with full DOM access.
+- For SPAs, listen for navigation events — pages don't fully reload.
+- Prefer CSS-only solutions when possible.
+
+## Adding or editing a rule
+
+1. Read \`sites.yaml\` to check whether a rule for the site already exists.
+2. If not, create \`<sitename>/style.css\` and/or \`script.js\` in this directory.
+3. Add an entry to \`sites.yaml\` with the correct matches and file paths.
+4. If the rule exists, edit its CSS/JS files in place.
+
+Changes are picked up automatically — no restart needed.
+`
+
+const SOURCES_AGENTS_MD = `# Sources
+
+This directory holds the ejected browser UI source. It is empty until you eject from the browser's Settings view.
+
+When populated, the browser loads its UI from here instead of the copy bundled with the app. Edit the files directly; reload the window to see changes.
+
+## Structure
+
+\`\`\`
+ui/
+  index.html     Shell
+  app.js         Preact overlay app (address bar, history)
+  settings.js    Settings view
+  error.html     Error page for failed loads
+  style.css      Styles (light/dark, oklch)
+  lib/           Vendored Preact + htm + hooks
+\`\`\`
+
+- No build step, no transpiler. Plain ES modules using Preact + htm.
+- Use the \`html\` tagged template literal (htm) instead of JSX.
+- Keep it small.
+
+## Applying Updates (/update-ui)
+
+When \`UPDATE.md\` appears in this directory, the browser's built-in UI has changed since the user ejected. A machine-readable manifest is also written to \`~/.general-browser/pending-update.yml\`:
+
+\`\`\`yaml
+source_dir: /path/to/sources
+builtin_dir: /path/to/app
+files:
+  - path: ui/app.js
+    status: modified
+    user_modified: true
+\`\`\`
+
+### For files the user has NOT modified (\`user_modified: false\`)
+
+- **modified**: copy from \`builtin_dir\` to \`source_dir\`. Safe to overwrite.
+- **added**: copy the new file from \`builtin_dir\`.
+- **deleted**: delete the file from \`source_dir\`.
+
+### For files the user HAS modified (\`user_modified: true\`)
+
+Read both the built-in (new upstream) version and the user's current version. Apply upstream changes while preserving the user's customizations.
+
+- User changes always take priority.
+- If both sides changed the same region, keep the user's version and add a comment noting what upstream intended.
+- If upstream deleted it but the user modified it, keep the user's file with a comment.
+
+After applying, tell the user to click "Mark as Resolved" in browser Settings. This re-baselines the manifest and removes \`UPDATE.md\`.
+`
+
+function writeIfMissing(filePath, contents) {
+  if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, contents)
+}
+
+function migrateLegacyDataDir() {
+  // One-time move from ~/.browser to ~/.general-browser
+  if (fs.existsSync(LEGACY_DATA_DIR) && !fs.existsSync(DATA_DIR)) {
+    try {
+      fs.renameSync(LEGACY_DATA_DIR, DATA_DIR)
+    } catch {
+      // Fall through — we'll just create a fresh data dir
+    }
   }
+}
+
+function ensureDataDir() {
+  migrateLegacyDataDir()
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.mkdirSync(SOURCES_DIR, { recursive: true })
+
+  // Seed SITES_DIR from the built-in sites the first time we run
+  if (!fs.existsSync(SITES_DIR)) {
+    copyDirRecursive(BUILTIN_SITES, SITES_DIR)
+  }
+
+  writeIfMissing(SETTINGS_PATH, DEFAULT_SETTINGS_YML)
+  writeIfMissing(ROOT_AGENTS_PATH, ROOT_AGENTS_MD)
+  writeIfMissing(SITES_AGENTS_PATH, SITES_AGENTS_MD)
+  writeIfMissing(SOURCES_AGENTS_PATH, SOURCES_AGENTS_MD)
 }
 
 function loadSettings() {
   try {
     const raw = fs.readFileSync(SETTINGS_PATH, 'utf8')
-    return yaml.load(raw) || {}
+    const loaded = yaml.load(raw) || {}
+    // Legacy: old installs stored a user-picked source_dir in settings.yml
+    if (loaded.source_dir !== undefined) delete loaded.source_dir
+    return loaded
   } catch {
     return {}
   }
@@ -116,22 +252,20 @@ function addToHistory(url, title) {
 }
 
 // ── UI resolution chain ────────────────────────────────────────────────────────
+function hasEjectedUI() {
+  return fs.existsSync(path.join(SOURCES_DIR, 'ui', 'index.html'))
+}
+
 function getUIPath() {
-  if (settings.source_dir && fs.existsSync(path.join(settings.source_dir, 'ui', 'index.html'))) {
-    return path.join(settings.source_dir, 'ui')
-  }
-  return BUILTIN_UI
+  return hasEjectedUI() ? path.join(SOURCES_DIR, 'ui') : BUILTIN_UI
 }
 
 function getSitesPath() {
-  if (settings.source_dir && fs.existsSync(path.join(settings.source_dir, 'sites'))) {
-    return path.join(settings.source_dir, 'sites')
-  }
-  return BUILTIN_SITES
+  return SITES_DIR
 }
 
 function getSitesConfigPath() {
-  const custom = path.join(getSitesPath(), 'sites.yaml')
+  const custom = path.join(SITES_DIR, 'sites.yaml')
   if (fs.existsSync(custom)) return custom
   return path.join(BUILTIN_SITES, 'sites.yaml')
 }
@@ -168,17 +302,12 @@ function copyDirRecursive(src, dest) {
 }
 
 function checkForUIUpdates() {
-  if (!settings.source_dir || !fs.existsSync(MANIFEST_PATH)) {
+  if (!hasEjectedUI() || !fs.existsSync(MANIFEST_PATH)) {
     return { pending: false }
   }
   try {
     const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
-    const builtinHashes = {
-      ...walkDir(BUILTIN_UI, 'ui'),
-      ...walkDir(BUILTIN_SITES, 'sites'),
-    }
-    const agentsSrc = path.join(__dirname, 'AGENTS.md')
-    if (fs.existsSync(agentsSrc)) builtinHashes['AGENTS.md'] = hashFile(agentsSrc)
+    const builtinHashes = walkDir(BUILTIN_UI, 'ui')
     const files = []
 
     for (const [rel, hash] of Object.entries(builtinHashes)) {
@@ -186,7 +315,7 @@ function checkForUIUpdates() {
       if (!manifestHash) {
         files.push({ path: rel, status: 'added', user_modified: false })
       } else if (hash !== manifestHash) {
-        const userFile = path.join(settings.source_dir, rel)
+        const userFile = path.join(SOURCES_DIR, rel)
         let userModified = false
         if (fs.existsSync(userFile)) {
           userModified = hashFile(userFile) !== manifestHash
@@ -197,7 +326,7 @@ function checkForUIUpdates() {
 
     for (const rel of Object.keys(manifest.files || {})) {
       if (!builtinHashes[rel]) {
-        const userFile = path.join(settings.source_dir, rel)
+        const userFile = path.join(SOURCES_DIR, rel)
         const userModified = fs.existsSync(userFile) && hashFile(userFile) !== manifest.files[rel]
         files.push({ path: rel, status: 'deleted', user_modified: userModified })
       }
@@ -242,11 +371,10 @@ function urlMatchesPattern(url, pattern) {
 }
 
 function resolveSiteFile(relativePath) {
-  // Resolution chain: ejected sites dir -> built-in sites dir
-  if (settings.source_dir) {
-    const custom = path.join(settings.source_dir, relativePath)
-    if (fs.existsSync(custom)) return custom
-  }
+  // Rule paths are relative to DATA_DIR (they begin with "sites/...").
+  // Resolution chain: user's sites dir -> built-in (as a fallback for refs the user deleted).
+  const custom = path.join(DATA_DIR, relativePath)
+  if (fs.existsSync(custom)) return custom
   const builtin = path.join(__dirname, relativePath)
   if (fs.existsSync(builtin)) return builtin
   return null
@@ -569,51 +697,27 @@ ipcMain.handle('set-overlay-visible', (e, visible) => {
 ipcMain.handle('get-settings', () => settings)
 
 ipcMain.handle('save-settings', (e, newSettings) => {
-  const sourceDirChanged = newSettings.source_dir !== settings.source_dir
   saveSettings(newSettings)
-  // Only reload overlay if source_dir changed
-  if (sourceDirChanged) {
+})
+
+ipcMain.handle('eject', () => {
+  try {
+    // Copy the built-in UI into ~/.general-browser/sources/ui.
+    // Sites already live at ~/.general-browser/sites and are edited in place.
+    copyDirRecursive(BUILTIN_UI, path.join(SOURCES_DIR, 'ui'))
+    const manifest = {
+      ejected_at: new Date().toISOString(),
+      builtin_version: require('./package.json').version,
+      files: walkDir(BUILTIN_UI, 'ui'),
+    }
+    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
     startWatchers()
     for (const state of windows.values()) {
       if (state.overlayView) {
         state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
       }
     }
-  }
-})
-
-ipcMain.handle('pick-directory', async () => {
-  const focused = BrowserWindow.getFocusedWindow()
-  const result = await dialog.showOpenDialog(focused, {
-    properties: ['openDirectory', 'createDirectory'],
-    title: 'Choose source directory',
-  })
-  if (result.canceled || !result.filePaths.length) return null
-  return result.filePaths[0]
-})
-
-ipcMain.handle('eject', (e, targetDir) => {
-  try {
-    // Copy ui/, sites/, and AGENTS.md into the target directory
-    copyDirRecursive(BUILTIN_UI, path.join(targetDir, 'ui'))
-    copyDirRecursive(BUILTIN_SITES, path.join(targetDir, 'sites'))
-    const agentsSrc = path.join(__dirname, 'AGENTS.md')
-    if (fs.existsSync(agentsSrc)) fs.copyFileSync(agentsSrc, path.join(targetDir, 'AGENTS.md'))
-    // Write manifest recording built-in hashes at eject time
-    const uiHashes = walkDir(BUILTIN_UI, 'ui')
-    const sitesHashes = walkDir(BUILTIN_SITES, 'sites')
-    const allHashes = { ...uiHashes, ...sitesHashes }
-    if (fs.existsSync(agentsSrc)) allHashes['AGENTS.md'] = hashFile(agentsSrc)
-    const manifest = {
-      ejected_at: new Date().toISOString(),
-      builtin_version: require('./package.json').version,
-      files: allHashes,
-    }
-    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
-    // Update settings
-    settings.source_dir = targetDir
-    saveSettings(settings)
-    return { success: true, fileCount: Object.keys(allHashes).length }
+    return { success: true, fileCount: Object.keys(manifest.files).length }
   } catch (err) {
     return { success: false, error: err.message }
   }
@@ -623,14 +727,14 @@ ipcMain.handle('get-update-status', () => checkForUIUpdates())
 
 ipcMain.handle('prepare-update', () => {
   const status = checkForUIUpdates()
-  if (!status.pending || !settings.source_dir) return { success: false, error: 'No updates' }
-  const updatePath = path.join(settings.source_dir, 'UPDATE.md')
+  if (!status.pending || !hasEjectedUI()) return { success: false, error: 'No updates' }
+  const updatePath = path.join(SOURCES_DIR, 'UPDATE.md')
   const lines = [
     '# Pending Update',
     '',
     `Generated: ${new Date().toISOString()}`,
     `Version: ${require('./package.json').version}`,
-    `Source: ${settings.source_dir}`,
+    `Source: ${SOURCES_DIR}`,
     `Built-in: ${path.join(__dirname)}`,
     '',
     '## Changed Files',
@@ -651,7 +755,7 @@ ipcMain.handle('prepare-update', () => {
   // Also write the machine-readable version for the skill
   fs.writeFileSync(PENDING_UPDATE_PATH, yaml.dump({
     from_version: require('./package.json').version,
-    source_dir: settings.source_dir,
+    source_dir: SOURCES_DIR,
     builtin_dir: path.join(__dirname),
     files: status.files,
   }))
@@ -660,20 +764,15 @@ ipcMain.handle('prepare-update', () => {
 
 ipcMain.handle('finalize-update', () => {
   try {
-    const hashes = { ...walkDir(BUILTIN_UI, 'ui'), ...walkDir(BUILTIN_SITES, 'sites') }
-    const agentsSrc = path.join(__dirname, 'AGENTS.md')
-    if (fs.existsSync(agentsSrc)) hashes['AGENTS.md'] = hashFile(agentsSrc)
     const manifest = {
       ejected_at: new Date().toISOString(),
       builtin_version: require('./package.json').version,
-      files: hashes,
+      files: walkDir(BUILTIN_UI, 'ui'),
     }
     fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
     if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
-    if (settings.source_dir) {
-      const updateMd = path.join(settings.source_dir, 'UPDATE.md')
-      if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
-    }
+    const updateMd = path.join(SOURCES_DIR, 'UPDATE.md')
+    if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
     return { success: true }
   } catch (err) {
     return { success: false, error: err.message }
@@ -725,7 +824,8 @@ function resolveForShell(p) {
 }
 
 ipcMain.handle('open-site-rule-dir', (_e, filePath) => {
-  const dir = path.dirname(path.resolve(getSitesPath(), '..', filePath))
+  // Rule paths start with "sites/..." and are resolved against DATA_DIR
+  const dir = path.dirname(path.resolve(DATA_DIR, filePath))
   shell.openPath(resolveForShell(dir))
 })
 
@@ -743,13 +843,15 @@ ipcMain.handle('open-path', async (_e, p) => {
 })
 
 ipcMain.handle('reset-source-dir', () => {
-  delete settings.source_dir
-  saveSettings(settings)
-  // Clean up manifest
+  // Remove the ejected UI copy so the browser reverts to the built-in shell.
+  // The sites directory is left alone.
+  const ejectedUI = path.join(SOURCES_DIR, 'ui')
+  if (fs.existsSync(ejectedUI)) fs.rmSync(ejectedUI, { recursive: true, force: true })
   if (fs.existsSync(MANIFEST_PATH)) fs.unlinkSync(MANIFEST_PATH)
   if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
+  const updateMd = path.join(SOURCES_DIR, 'UPDATE.md')
+  if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
   startWatchers()
-  // Reload overlay in all windows from built-in
   for (const state of windows.values()) {
     if (state.overlayView) {
       state.overlayView.webContents.loadFile(path.join(BUILTIN_UI, 'index.html'))
@@ -773,7 +875,8 @@ ipcMain.handle('set-default-browser', () => {
 ipcMain.handle('get-ui-paths', () => ({
   builtin: BUILTIN_UI,
   active: getUIPath(),
-  isCustom: !!settings.source_dir,
+  sources: SOURCES_DIR,
+  isCustom: hasEjectedUI(),
 }))
 
 // ── Catch-all: redirect window.open into a new window ───────────────────────

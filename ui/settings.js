@@ -26,11 +26,9 @@ export function SettingsView({ onBack }) {
 
   useEffect(() => { refresh() }, [])
 
-  const pickAndEject = async () => {
-    const dir = await window.browser.pickDirectory()
-    if (!dir) return
+  const eject = async () => {
     setMessage('Ejecting...')
-    const result = await window.browser.eject(dir)
+    const result = await window.browser.eject()
     if (result.success) {
       setMessage(`Ejected ${result.fileCount} files. Reloading...`)
       refresh()
@@ -96,7 +94,7 @@ export function SettingsView({ onBack }) {
         ${updateStatus?.pending && html`
           <div class="settings-update-banner">
             <span class="settings-update-text">UI Update Available</span>
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? settings.source_dir : uiPaths.builtin)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? uiPaths.sources : uiPaths.builtin)}>Open</button>
           </div>
           <p class="settings-hint settings-update-hint">The built-in UI has changed since you ejected. Open your source directory in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
         `}
@@ -127,16 +125,16 @@ export function SettingsView({ onBack }) {
         <div class="settings-field">
           <label class="settings-label">Source Directory</label>
           <p class="settings-hint">${uiPaths.isCustom
-            ? 'Ejected. The app is loading your customized copy.'
-            : 'Eject to copy the UI and site rules to a directory you control. Edit the files directly or open the folder in Claude Code.'
+            ? 'Ejected. The app is loading the UI from your sources directory.'
+            : 'Eject to copy the UI into ~/.general-browser/sources/. Edit the files directly or open the folder in Claude Code.'
           }</p>
 
-          ${uiPaths.isCustom && html`<div class="settings-value">${settings.source_dir}</div>`}
+          ${uiPaths.isCustom && html`<div class="settings-value">${uiPaths.sources}</div>`}
 
           <div class="settings-actions">
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? settings.source_dir : uiPaths.builtin)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? uiPaths.sources : uiPaths.builtin)}>Open</button>
             ${!uiPaths.isCustom && html`
-              <button class="settings-btn settings-btn-primary" onClick=${pickAndEject}>Eject</button>
+              <button class="settings-btn settings-btn-primary" onClick=${eject}>Eject</button>
             `}
             ${uiPaths.isCustom && html`
               <button class="settings-btn" onClick=${resetToDefault}>Reset to Default</button>

@@ -19,8 +19,7 @@ contextBridge.exposeInMainWorld('browser', {
 
   getSettings:     ()    => ipcRenderer.invoke('get-settings'),
   saveSettings:    (s)   => ipcRenderer.invoke('save-settings', s),
-  pickDirectory:   ()    => ipcRenderer.invoke('pick-directory'),
-  eject:           (dir) => ipcRenderer.invoke('eject', dir),
+  eject:           ()    => ipcRenderer.invoke('eject'),
   getUpdateStatus: ()    => ipcRenderer.invoke('get-update-status'),
   prepareUpdate:   ()    => ipcRenderer.invoke('prepare-update'),
   finalizeUpdate:  ()    => ipcRenderer.invoke('finalize-update'),

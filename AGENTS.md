@@ -1,16 +1,18 @@
-# Browser
+# General Browser
 
 Lightweight Electron browser. Page fills the entire window. All UI is behind Cmd+K.
 
-## Structure
+User data lives in `~/.general-browser/` (settings, history, sites, and an optional `sources/` directory for ejected UI). See that directory's `AGENTS.md` for the user-facing layout.
+
+## Structure (this repo)
 
 - `ui/` -- Overlay UI. No build step, plain ES modules with Preact + htm.
   - `index.html` -- Shell.
-  - `app.js` -- Preact app (address bar, tabs, history).
+  - `app.js` -- Preact app (address bar, history).
   - `settings.js` -- Settings view (site rules, source directory, updates).
   - `style.css` -- Styles (light/dark, oklch, CSS variables in :root).
   - `lib/` -- Vendored Preact + htm + hooks.
-- `sites/` -- Site rules: custom CSS/JS injected into pages by URL pattern.
+- `sites/` -- Built-in site rules: custom CSS/JS injected into pages by URL pattern. Seeded into `~/.general-browser/sites/` on first run.
   - `sites.yaml` -- Rule definitions (name, enabled, matches, css, js).
   - `youtube/`, `instagram/`, `twitter/` -- Per-site CSS and JS files.
 
@@ -54,16 +56,16 @@ rules:
 
 When an `UPDATE.md` file exists in this directory, the browser's built-in files have changed since the user ejected. This file lists which files changed and whether the user modified them.
 
-A machine-readable manifest is also written to `~/.browser/pending-update.yml` with this structure:
+A machine-readable manifest is also written to `~/.general-browser/pending-update.yml` with this structure:
 
 ```yaml
-source_dir: /path/to/ejected
+source_dir: /path/to/sources
 builtin_dir: /path/to/app
 files:
   - path: ui/app.js
     status: modified
     user_modified: true
-  - path: sites/youtube/style.css
+  - path: ui/style.css
     status: modified
     user_modified: false
 ```

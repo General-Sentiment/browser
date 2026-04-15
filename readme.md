@@ -28,13 +28,13 @@ Cmd+K (or Cmd+L) opens the overlay. Type a URL or search query, press Enter. Esc
 
 ## Settings
 
-All configuration lives in `~/.browser/settings.yml`, created on first run.
+All user data lives in `~/.general-browser/`, created on first run. Inside you'll find `settings.yml`, `history.json`, a `sites/` directory for site rules, and an (initially empty) `sources/` directory for the ejected UI.
 
 ## Site Rules
 
 Includes a built-in [Fence](https://generalsentiment.co/fence/). Site rules let you inject your own CSS and JS into any page. Instead of reaching for a separate ad blocker or extension, you intervene directly. Hide what you don't want, restyle what you do, add behavior where it's missing. The browser is just a thin shell around your preferences.
 
-Rules are defined in `~/.browser/sites.yaml` and the actual CSS/JS files live in `~/.browser/sites/`.
+Rules are defined in `~/.general-browser/sites/sites.yaml` and the actual CSS/JS files live alongside it in `~/.general-browser/sites/`.
 
 The app ships with default rules for YouTube and Instagram. Toggle them on or off from the gear icon in the overlay.
 
@@ -50,19 +50,19 @@ rules:
       - sites/youtube/script.js
 ```
 
-File paths are relative to `~/.browser/`. Glob patterns for URL matching: `*` matches anything.
+File paths are relative to `~/.general-browser/`. Glob patterns for URL matching: `*` matches anything.
 
 ## Ejecting
 
-Click the gear icon in the overlay and choose "Eject" to copy the browser's source files to a directory you control. This copies both the overlay UI and the default site rules. The app loads your copies instead of the built-in ones. Edit freely.
+Click the gear icon in the overlay and choose "Eject" to copy the browser's UI source into `~/.general-browser/sources/`. The app loads your copy instead of the built-in one. Edit freely.
 
 When the app updates and the built-in files change, the settings view shows which files diverged. Run `/update-ui` in Claude Code to merge upstream changes around your customizations.
 
 ### How updates merge
 
-At eject time, the app records a SHA-256 hash of every built-in file in a manifest (`~/.browser/eject-manifest.json`). On each launch it re-hashes the built-in files and compares them against that manifest. For each file that changed upstream, it also checks whether your copy diverged from the original. This gives every file a status of added, modified, or deleted, plus a flag for whether you touched it too.
+At eject time, the app records a SHA-256 hash of every built-in file in a manifest (`~/.general-browser/ui-manifest.json`). On each launch it re-hashes the built-in files and compares them against that manifest. For each file that changed upstream, it also checks whether your copy diverged from the original. This gives every file a status of added, modified, or deleted, plus a flag for whether you touched it too.
 
-When you run `/update-ui`, the skill reads a machine-readable manifest (`~/.browser/pending-update.yml`) that lists every changed file with its status and conflict flag. Files you haven't modified are overwritten directly from the new built-in source. Files you have modified are where the LLM earns its keep: it reads both the new upstream version and your version, understands the intent of each change, and merges them with your modifications taking priority. If both sides changed the same region, your version wins and a comment is left noting what upstream intended.
+When you run `/update-ui`, the skill reads a machine-readable manifest (`~/.general-browser/pending-update.yml`) that lists every changed file with its status and conflict flag. Files you haven't modified are overwritten directly from the new built-in source. Files you have modified are where the LLM earns its keep: it reads both the new upstream version and your version, understands the intent of each change, and merges them with your modifications taking priority. If both sides changed the same region, your version wins and a comment is left noting what upstream intended.
 
 After the merge, the manifest is re-baselined to the current built-in hashes, so the cycle resets cleanly for the next update.
 
