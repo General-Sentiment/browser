@@ -478,7 +478,8 @@ function createWindowState() {
   state.view = new WebContentsView({
     webPreferences: { contextIsolation: true, sandbox: true },
   })
-  state.view.setBackgroundColor('#ffffff')
+  // Match the window's theme so dark mode doesn't flash white before the page paints.
+  state.view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff')
   state.win.contentView.addChildView(state.view)
   fitView(state, state.view)
   registerShortcuts(state.view.webContents, () => state)
