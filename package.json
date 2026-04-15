@@ -60,7 +60,7 @@
     "publish": {
       "provider": "github",
       "owner": "General-Sentiment",
-      "repo": "General-Browser",
+      "repo": "browser",
       "releaseType": "release"
     }
   }
