@@ -1,6 +1,6 @@
 # General Browser
 
-A minimal fully modifiable browser with (basically) no interface. Pages fill the entire window. All controls live behind a single Cmd+K overlay: address bar, tabs, history.
+A minimal fully modifiable browser with (basically) no interface. One page per window. All controls live behind a single Cmd+K overlay: address bar, history, settings.
 
 **macOS only for now.**
 
@@ -16,19 +16,36 @@ Cmd+K (or Cmd+L) opens the overlay. Type a URL or search query, press Enter. Esc
 
 ## Shortcuts
 
-| Key           | Action         |
-| ------------- | -------------- |
-| Cmd+K / Cmd+L | Toggle overlay |
-| Cmd+T         | New tab        |
-| Cmd+W         | Close tab      |
-| Cmd+N         | New window     |
-| Cmd+Shift+[   | Previous tab   |
-| Cmd+Shift+]   | Next tab       |
-| Escape        | Close overlay  |
+| Key                   | Action           |
+| --------------------- | ---------------- |
+| Cmd+K / Cmd+L / Cmd+; | Toggle overlay   |
+| Cmd+,                 | Settings         |
+| Cmd+T / Cmd+N         | New window       |
+| Cmd+W                 | Close window     |
+| Cmd+R                 | Reload           |
+| Cmd+[                 | Back             |
+| Cmd+]                 | Forward          |
+| Escape                | Close overlay    |
 
-## Settings
+## User data
 
-All user data lives in `~/.general-browser/`, created on first run. Inside you'll find `settings.yml`, `history.json`, a `sites/` directory for site rules, and an (initially empty) `sources/` directory for the ejected UI.
+All user data lives in `~/.general-browser/`, created on first run:
+
+```
+~/.general-browser/
+  AGENTS.md          Overview, points to the subdirectory AGENTS.md files
+  settings.yml       Preferences (start page, search engine, color mode)
+  history.json       Recent browsing history
+  window-state.json  Last window size and position
+  sites/             Site rules (CSS/JS injected by URL pattern)
+    AGENTS.md
+    sites.yaml
+    youtube/, instagram/, twitter/
+  sources/           Ejected browser UI (empty until you eject)
+    AGENTS.md
+```
+
+Open the folder in an AI coding agent and the `AGENTS.md` files describe how to work with it.
 
 ## Site Rules
 
@@ -73,13 +90,16 @@ This process is intentionally inexact. What ships in an update is code alongside
 ```
 main.js          Electron main process
 preload.js       IPC bridge
+AGENTS.md        Guidance for agents editing this repo
+assets/          App icon
 ui/
   index.html     Shell
   app.js         Preact overlay app
   settings.js    Settings view
+  error.html     Error page for failed loads
   style.css      Styles (light/dark, oklch)
   lib/           Vendored preact + htm + hooks
-sites/           Default site rules (youtube, instagram)
+sites/           Built-in site rules, seeded into ~/.general-browser/sites/ on first run
 ```
 
 ---
