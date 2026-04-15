@@ -94,7 +94,7 @@ export function SettingsView({ onBack }) {
         ${updateStatus?.pending && html`
           <div class="settings-update-banner">
             <span class="settings-update-text">UI Update Available</span>
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? uiPaths.sources : uiPaths.builtin)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.sources)}>Open</button>
           </div>
           <p class="settings-hint settings-update-hint">The built-in UI has changed since you ejected. Open your source directory in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
         `}
@@ -132,7 +132,7 @@ export function SettingsView({ onBack }) {
           ${uiPaths.isCustom && html`<div class="settings-value">${uiPaths.sources}</div>`}
 
           <div class="settings-actions">
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.isCustom ? uiPaths.sources : uiPaths.builtin)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.sources)}>Open</button>
             ${!uiPaths.isCustom && html`
               <button class="settings-btn settings-btn-primary" onClick=${eject}>Eject</button>
             `}
