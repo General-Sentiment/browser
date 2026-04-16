@@ -171,11 +171,34 @@ lib/           Vendored Preact + htm + hooks
 - Use the \`html\` tagged template literal (htm) instead of JSX.
 - Keep it small.
 
+## Persisting feature state
+
+The overlay has a scoped CRUD API at \`window.browser.data.*\` for reading and writing files inside \`~/.general-browser/\`. Use it instead of \`localStorage\` or a database when a feature needs to save state. Page webviews do not have access.
+
+All calls return \`{ ok, data?, error? }\`. Paths are relative to the data dir; \`..\` and absolute paths are rejected.
+
+\`\`\`js
+// Text + JSON
+await window.browser.data.writeJSON('bookmarks.json', [{ url, title }])
+const { ok, data } = await window.browser.data.readJSON('bookmarks.json')
+
+// Binary (images, PDFs, etc.)
+const res = await fetch(iconUrl)
+await window.browser.data.writeBlob('bookmarks/icons/foo.png', await res.blob())
+const { data: blob } = await window.browser.data.readBlob('bookmarks/icons/foo.png', 'image/png')
+img.src = URL.createObjectURL(blob)
+
+// Misc
+await window.browser.data.list('bookmarks/icons')     // [{ name, isDirectory }, …]
+await window.browser.data.exists('bookmarks.json')    // { ok, data: boolean }
+await window.browser.data.delete('bookmarks.json')
+\`\`\`
+
 When the app updates and upstream UI files change, the parent directory's AGENTS.md describes the merge flow.
 `
 
-function writeIfMissing(filePath, contents) {
-  if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, contents)
+function writeIfMissing(name, contents) {
+  if (!dataExists(name)) dataWrite(name, contents)
 }
 
 function migrateLegacyDataDir() {
@@ -212,28 +235,27 @@ function migrateSourcesLayout() {
 
   // The old manifest stored paths with a "ui/" prefix (e.g. "ui/app.js").
   // Rewrite to flat paths so they line up with the new layout.
-  if (fs.existsSync(MANIFEST_PATH)) {
+  if (dataExists('ui-manifest.json')) {
     try {
-      const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
+      const manifest = JSON.parse(dataReadText('ui-manifest.json'))
       if (manifest.files && Object.keys(manifest.files).some(k => k.startsWith('ui/'))) {
         const rewritten = {}
         for (const [k, v] of Object.entries(manifest.files)) {
           rewritten[k.startsWith('ui/') ? k.slice(3) : k] = v
         }
         manifest.files = rewritten
-        fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+        dataWrite('ui-manifest.json', JSON.stringify(manifest, null, 2))
       }
     } catch {}
   }
 }
 
 function writeInitialManifest() {
-  const manifest = {
+  dataWrite('ui-manifest.json', JSON.stringify({
     baselined_at: new Date().toISOString(),
     builtin_version: require('./package.json').version,
     files: walkDir(BUILTIN_UI),
-  }
-  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+  }, null, 2))
 }
 
 function ensureDataDir() {
@@ -241,8 +263,8 @@ function ensureDataDir() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
   migrateSourcesLayout()
 
-  // Seed SITES_DIR from the built-in sites the first time we run.
-  if (!fs.existsSync(SITES_DIR)) {
+  // Seed sites/ from the built-in sites the first time we run.
+  if (!dataExists('sites')) {
     copyDirRecursive(BUILTIN_SITES, SITES_DIR)
   }
 
@@ -250,25 +272,24 @@ function ensureDataDir() {
   // Seed it from the bundle the first time we run. In dev runs we skip this;
   // the app reads directly from the repo's ui/ so edits render live.
   if (app.isPackaged) {
-    if (!fs.existsSync(USER_UI_DIR)) {
+    if (!dataExists('ui')) {
       copyDirRecursive(BUILTIN_UI, USER_UI_DIR)
       writeInitialManifest()
-    } else if (!fs.existsSync(MANIFEST_PATH)) {
+    } else if (!dataExists('ui-manifest.json')) {
       // Directory survived a downgrade or a manual copy; baseline it now.
       writeInitialManifest()
     }
   }
 
-  writeIfMissing(SETTINGS_PATH, DEFAULT_SETTINGS_YML)
-  writeIfMissing(ROOT_AGENTS_PATH, ROOT_AGENTS_MD)
-  writeIfMissing(SITES_AGENTS_PATH, SITES_AGENTS_MD)
-  if (fs.existsSync(USER_UI_DIR)) writeIfMissing(UI_AGENTS_PATH, UI_AGENTS_MD)
+  writeIfMissing('settings.yml', DEFAULT_SETTINGS_YML)
+  writeIfMissing('AGENTS.md', ROOT_AGENTS_MD)
+  writeIfMissing('sites/AGENTS.md', SITES_AGENTS_MD)
+  if (dataExists('ui')) writeIfMissing('ui/AGENTS.md', UI_AGENTS_MD)
 }
 
 function loadSettings() {
   try {
-    const raw = fs.readFileSync(SETTINGS_PATH, 'utf8')
-    const loaded = yaml.load(raw) || {}
+    const loaded = yaml.load(dataReadText('settings.yml')) || {}
     // Legacy: old installs stored a user-picked source_dir in settings.yml
     if (loaded.source_dir !== undefined) delete loaded.source_dir
     return loaded
@@ -284,24 +305,20 @@ let lastWindowBounds = null
 const windows = new Map()  // webContentsId -> WindowState
 
 function loadWindowState() {
-  try { return JSON.parse(fs.readFileSync(WINDOW_STATE_PATH, 'utf8')) } catch { return null }
+  try { return JSON.parse(dataReadText('window-state.json')) } catch { return null }
 }
 
 function saveWindowState(bounds) {
   lastWindowBounds = bounds
-  fs.writeFileSync(WINDOW_STATE_PATH, JSON.stringify(bounds))
+  dataWrite('window-state.json', JSON.stringify(bounds))
 }
 
 function loadHistory() {
-  try {
-    return JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8'))
-  } catch {
-    return []
-  }
+  try { return JSON.parse(dataReadText('history.json')) } catch { return [] }
 }
 
 function saveHistory() {
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(history.slice(0, 1000), null, 2))
+  dataWrite('history.json', JSON.stringify(history.slice(0, 1000), null, 2))
 }
 
 function addToHistory(url, title) {
@@ -363,11 +380,11 @@ function copyDirRecursive(src, dest) {
 function checkForUIUpdates() {
   // In dev we're editing the source directly; there's nothing to "update."
   if (!app.isPackaged) return { pending: false }
-  if (!fs.existsSync(USER_UI_DIR) || !fs.existsSync(MANIFEST_PATH)) {
+  if (!dataExists('ui') || !dataExists('ui-manifest.json')) {
     return { pending: false }
   }
   try {
-    const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
+    const manifest = JSON.parse(dataReadText('ui-manifest.json'))
     const builtinHashes = walkDir(BUILTIN_UI)
     const files = []
 
@@ -376,10 +393,10 @@ function checkForUIUpdates() {
       if (!manifestHash) {
         files.push({ path: rel, status: 'added', user_modified: false })
       } else if (hash !== manifestHash) {
-        const userFile = path.join(USER_UI_DIR, rel)
+        const userRel = 'ui/' + rel
         let userModified = false
-        if (fs.existsSync(userFile)) {
-          userModified = hashFile(userFile) !== manifestHash
+        if (dataExists(userRel)) {
+          userModified = hashFile(resolveDataPath(userRel)) !== manifestHash
         }
         files.push({ path: rel, status: 'modified', user_modified: userModified })
       }
@@ -387,8 +404,8 @@ function checkForUIUpdates() {
 
     for (const rel of Object.keys(manifest.files || {})) {
       if (!builtinHashes[rel]) {
-        const userFile = path.join(USER_UI_DIR, rel)
-        const userModified = fs.existsSync(userFile) && hashFile(userFile) !== manifest.files[rel]
+        const userRel = 'ui/' + rel
+        const userModified = dataExists(userRel) && hashFile(resolveDataPath(userRel)) !== manifest.files[rel]
         files.push({ path: rel, status: 'deleted', user_modified: userModified })
       }
     }
@@ -405,7 +422,7 @@ function applyColorMode() {
 }
 
 function saveSettings(newSettings) {
-  fs.writeFileSync(SETTINGS_PATH, yaml.dump(newSettings))
+  dataWrite('settings.yml', yaml.dump(newSettings))
   settings = newSettings
   applyColorMode()
 }
@@ -413,15 +430,17 @@ function saveSettings(newSettings) {
 // ── Site rules (user styles & scripts) ─────────────────────────────────────────
 function loadSitesConfig() {
   try {
-    return yaml.load(fs.readFileSync(getSitesConfigPath(), 'utf8')) || { rules: [] }
+    if (dataExists('sites/sites.yaml')) {
+      return yaml.load(dataReadText('sites/sites.yaml')) || { rules: [] }
+    }
+    return yaml.load(fs.readFileSync(path.join(BUILTIN_SITES, 'sites.yaml'), 'utf8')) || { rules: [] }
   } catch {
     return { rules: [] }
   }
 }
 
 function saveSitesConfig(config) {
-  const configPath = getSitesConfigPath()
-  fs.writeFileSync(configPath, yaml.dump(config))
+  dataWrite('sites/sites.yaml', yaml.dump(config))
 }
 
 function urlMatchesPattern(url, pattern) {
@@ -431,13 +450,16 @@ function urlMatchesPattern(url, pattern) {
   return new RegExp('^' + escaped + '$').test(url)
 }
 
-function resolveSiteFile(relativePath) {
+function readSiteFile(relativePath) {
   // Rule paths are relative to DATA_DIR (they begin with "sites/...").
-  // Resolution chain: user's sites dir -> built-in (as a fallback for refs the user deleted).
-  const custom = path.join(DATA_DIR, relativePath)
-  if (fs.existsSync(custom)) return custom
-  const builtin = path.join(__dirname, relativePath)
-  if (fs.existsSync(builtin)) return builtin
+  // Resolution chain: user's sites dir -> built-in (fallback for refs the user deleted).
+  try {
+    if (dataExists(relativePath)) return dataReadText(relativePath)
+  } catch {}
+  try {
+    const builtin = path.join(__dirname, relativePath)
+    if (fs.existsSync(builtin)) return fs.readFileSync(builtin, 'utf8')
+  } catch {}
   return null
 }
 
@@ -450,21 +472,15 @@ function injectSiteRules(webContents, url) {
 
     if (Array.isArray(rule.css)) {
       for (const cssPath of rule.css) {
-        const full = resolveSiteFile(cssPath)
-        if (full) {
-          const css = fs.readFileSync(full, 'utf8')
-          webContents.insertCSS(css).catch(() => {})
-        }
+        const css = readSiteFile(cssPath)
+        if (css != null) webContents.insertCSS(css).catch(() => {})
       }
     }
 
     if (Array.isArray(rule.js)) {
       for (const jsPath of rule.js) {
-        const full = resolveSiteFile(jsPath)
-        if (full) {
-          const code = fs.readFileSync(full, 'utf8')
-          webContents.executeJavaScript(code).catch(() => {})
-        }
+        const code = readSiteFile(jsPath)
+        if (code != null) webContents.executeJavaScript(code).catch(() => {})
       }
     }
   }
@@ -798,9 +814,9 @@ ipcMain.handle('prepare-update', () => {
   lines.push('Run `/update-ui` in Claude Code from this directory, or apply manually.')
   lines.push('After applying, click "Mark as Resolved" in browser settings.')
   lines.push('')
-  fs.writeFileSync(UPDATE_MD_PATH, lines.join('\n'))
+  dataWrite('UPDATE.md', lines.join('\n'))
   // Machine-readable companion for the /update-ui skill.
-  fs.writeFileSync(PENDING_UPDATE_PATH, yaml.dump({
+  dataWrite('pending-update.yml', yaml.dump({
     from_version: require('./package.json').version,
     source_dir: USER_UI_DIR,
     builtin_dir: BUILTIN_UI,
@@ -812,8 +828,8 @@ ipcMain.handle('prepare-update', () => {
 ipcMain.handle('finalize-update', () => {
   try {
     writeInitialManifest()
-    if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
-    if (fs.existsSync(UPDATE_MD_PATH)) fs.unlinkSync(UPDATE_MD_PATH)
+    if (dataExists('pending-update.yml')) dataDelete('pending-update.yml')
+    if (dataExists('UPDATE.md')) dataDelete('UPDATE.md')
     return { success: true }
   } catch (err) {
     return { success: false, error: err.message }
@@ -887,12 +903,12 @@ ipcMain.handle('reset-ui', () => {
   // Throw away local edits and re-seed ~/.general-browser/ui/ from the bundle.
   // Sites are left alone.
   if (!app.isPackaged) return { success: false, error: 'Not available in dev mode' }
-  if (fs.existsSync(USER_UI_DIR)) fs.rmSync(USER_UI_DIR, { recursive: true, force: true })
+  if (dataExists('ui')) dataDelete('ui')
   copyDirRecursive(BUILTIN_UI, USER_UI_DIR)
   writeInitialManifest()
-  writeIfMissing(UI_AGENTS_PATH, UI_AGENTS_MD)
-  if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
-  if (fs.existsSync(UPDATE_MD_PATH)) fs.unlinkSync(UPDATE_MD_PATH)
+  writeIfMissing('ui/AGENTS.md', UI_AGENTS_MD)
+  if (dataExists('pending-update.yml')) dataDelete('pending-update.yml')
+  if (dataExists('UPDATE.md')) dataDelete('UPDATE.md')
   startWatchers()
   for (const state of windows.values()) {
     if (state.overlayView) {
@@ -901,6 +917,80 @@ ipcMain.handle('reset-ui', () => {
   }
   return { success: true }
 })
+
+// ── Data directory CRUD (window.browser.data.*) ────────────────────────────
+// Scoped to ~/.general-browser/. Path traversal and absolute paths are rejected.
+// The overlay UI can read/write/list/delete anything inside the data dir;
+// page webviews have no preload and so have no access to these handlers.
+//
+// These are also the primitives the browser itself uses for every read/write
+// of user-data files (settings, history, site rules, manifest, etc.). User
+// code and built-in code go through the same codepath by design: this is the
+// basis of a plugin model where a user feature has the same access as the
+// browser.
+function resolveDataPath(name) {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('path must be a non-empty string')
+  }
+  if (path.isAbsolute(name)) {
+    throw new Error('path must be relative to ~/.general-browser/')
+  }
+  const abs = path.resolve(DATA_DIR, name)
+  const rel = path.relative(DATA_DIR, abs)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('path escapes ~/.general-browser/')
+  }
+  return abs
+}
+
+function dataReadText(name) {
+  return fs.readFileSync(resolveDataPath(name), 'utf8')
+}
+
+function dataReadBytes(name) {
+  const buf = fs.readFileSync(resolveDataPath(name))
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+}
+
+function dataWrite(name, content) {
+  const abs = resolveDataPath(name)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  if (typeof content === 'string') {
+    fs.writeFileSync(abs, content, 'utf8')
+    return
+  }
+  let buf
+  if (content instanceof Uint8Array) buf = Buffer.from(content.buffer, content.byteOffset, content.byteLength)
+  else if (content instanceof ArrayBuffer) buf = Buffer.from(content)
+  else if (Buffer.isBuffer(content)) buf = content
+  else throw new Error('write() expects a string, Uint8Array, ArrayBuffer, or Buffer')
+  fs.writeFileSync(abs, buf)
+}
+
+function dataDelete(name) {
+  fs.rmSync(resolveDataPath(name), { recursive: true, force: true })
+}
+
+function dataExists(name) {
+  return fs.existsSync(resolveDataPath(name))
+}
+
+function dataList(name) {
+  return fs.readdirSync(resolveDataPath(name || '.'), { withFileTypes: true })
+    .map(e => ({ name: e.name, isDirectory: e.isDirectory() }))
+}
+
+function wrap(fn) {
+  try { return { ok: true, data: fn() } } catch (err) { return { ok: false, error: err.message } }
+}
+
+ipcMain.handle('data-read',        (_e, name)      => wrap(() => dataReadText(name)))
+ipcMain.handle('data-read-bytes',  (_e, name)      => wrap(() => dataReadBytes(name)))
+ipcMain.handle('data-write',       (_e, name, t)   => wrap(() => { dataWrite(name, t); return null }))
+ipcMain.handle('data-write-bytes', (_e, name, b)   => wrap(() => { dataWrite(name, b); return null }))
+ipcMain.handle('data-delete',      (_e, name)      => wrap(() => { dataDelete(name); return null }))
+ipcMain.handle('data-exists',      (_e, name)      => wrap(() => dataExists(name)))
+ipcMain.handle('data-list',        (_e, prefix)    => wrap(() => dataList(prefix)))
 
 ipcMain.handle('is-default-browser', () => {
   return app.isDefaultProtocolClient('https')

@@ -1,14 +1,14 @@
 # General Browser
 
-A minimal fully modifiable browser with (basically) no interface. One page per window. All controls live behind a single Cmd+K overlay: address bar, history, settings.
+A minimal fully modifiable browser with (basically) no interface. One page per window. Everything lives behind a single Cmd+K overlay: address bar, history, settings.
 
 **macOS only for now.**
 
 ## Philosophy
 
-The entire source ships inside the app. There is no build step, no bundler, no transpiler. The code you see is the code that runs. On first launch the UI is copied into `~/.general-browser/ui/` and the app reads from there. Edit freely.
+The source ships with the app. No build step, no bundler, no transpiler. The code you see is the code that runs. On first launch it copies into `~/.general-browser/ui/`. Edit freely.
 
-When the app updates, your modifications don't get overwritten. An LLM-assisted merge reconciles upstream changes with whatever you've done to the source. The codebase evolves like a living thing. Upstream improvements graft onto your local mutations, and the result is software that is partly the thing that was shipped and partly the thing you made it into.
+When the app updates, your edits stay put. An LLM merges upstream changes around whatever you've done. The codebase evolves like a living thing. Upstream improvements graft onto your local mutations. The result is software that is partly what shipped and partly what you made it into.
 
 ## Usage
 
@@ -29,15 +29,15 @@ Cmd+K (or Cmd+L) opens the overlay. Type a URL or search query, press Enter. Esc
 
 ## User data
 
-All user data lives in `~/.general-browser/`, created on first run:
+Everything lives in `~/.general-browser/`, created on first run:
 
 ```
 ~/.general-browser/
-  AGENTS.md          Overview, points to the subdirectory AGENTS.md files
-  settings.yml       Preferences (start page, search engine, color mode)
+  AGENTS.md          Overview for AI agents
+  settings.yml       Start page, search engine, color mode
   history.json       Recent browsing history
   window-state.json  Last window size and position
-  ui-manifest.json   Baseline hashes used to detect upstream UI changes
+  ui-manifest.json   Hashes used to detect upstream UI changes
   sites/             Site rules (CSS/JS injected by URL pattern)
     AGENTS.md
     sites.yaml
@@ -46,15 +46,13 @@ All user data lives in `~/.general-browser/`, created on first run:
     AGENTS.md
 ```
 
-Open the folder in an AI coding agent and the `AGENTS.md` files describe how to work with it.
+Open the folder in an AI coding agent. The `AGENTS.md` files explain the rest.
 
 ## Site Rules
 
-Includes a built-in [Fence](https://generalsentiment.co/fence/). Site rules let you inject your own CSS and JS into any page. Instead of reaching for a separate ad blocker or extension, you intervene directly. Hide what you don't want, restyle what you do, add behavior where it's missing. The browser is just a thin shell around your preferences.
+Site rules inject CSS and JS into pages you visit. Skip the ad blocker. Intervene directly. Hide what you don't want. Restyle what you do. Add behavior where it's missing. The browser is a thin shell around your preferences.
 
-Rules are defined in `~/.general-browser/sites/sites.yaml` and the actual CSS/JS files live alongside it in `~/.general-browser/sites/`.
-
-The app ships with default rules for YouTube and Instagram. Toggle them on or off from the gear icon in the overlay.
+Rules live in `~/.general-browser/sites/sites.yaml`. CSS and JS sit alongside them in `~/.general-browser/sites/`. The app ships with rules for [Fence](https://generalsentiment.co/fence/), YouTube, and Instagram. Toggle them from the gear icon in the overlay.
 
 ```yaml
 rules:
@@ -68,23 +66,42 @@ rules:
       - sites/youtube/script.js
 ```
 
-File paths are relative to `~/.general-browser/`. Glob patterns for URL matching: `*` matches anything.
+Paths are relative to `~/.general-browser/`. In match patterns, `*` matches anything.
+
+## Plugin architecture
+
+The overlay has a scoped CRUD API at `window.browser.data.*`. Read and write files anywhere inside `~/.general-browser/`. Use it for bookmarks, reading lists, saved images, annotations, whatever you want to persist. Page webviews have no preload, so no access. The boundary is the data dir.
+
+```js
+await window.browser.data.writeJSON("bookmarks.json", [{ url, title }]);
+const { ok, data } = await window.browser.data.readJSON("bookmarks.json");
+
+const res = await fetch(iconUrl);
+await window.browser.data.writeBlob(
+  "bookmarks/icons/foo.png",
+  await res.blob(),
+);
+```
+
+There is no privileged internal path. Settings, history, window state, site rules, UI manifest, update flow all run on the same primitives. Ask an agent to build a bookmarking feature and it gets the same access the core code has. The API is the plugin architecture. You build on the same surface the browser is built on.
+
+Path traversal and absolute paths are rejected. All calls return `{ ok, data?, error? }`. The full surface: `read`, `write`, `readJSON`, `writeJSON`, `readBytes`, `writeBytes`, `readBlob`, `writeBlob`, `delete`, `exists`, `list`.
 
 ## Customizing the UI
 
-The browser's overlay UI lives at `~/.general-browser/ui/`, seeded from the app bundle on first launch. Edit the files directly, or open the folder in an AI coding agent and tell it what you want to change. There is no eject step.
+The overlay UI lives at `~/.general-browser/ui/`, seeded from the app bundle on first launch. Edit the files directly. Or open the folder in an agent and tell it what to change.
 
-When the app updates and the built-in files change, the settings view shows a banner. Run `/update-ui` in Claude Code to merge upstream changes around your customizations.
+When the bundled UI changes upstream, settings shows a banner. Run `/update-ui` in Claude Code (or your agent of choice) to merge the changes around your edits.
 
 ### How updates merge
 
-At first launch (and after each applied update) the app records a SHA-256 hash of every built-in UI file in a manifest at `~/.general-browser/ui-manifest.json`. On each launch it re-hashes the current built-in files and compares them against that manifest. For each file that changed upstream, it also checks whether your copy diverged from the original. This gives every file a status of added, modified, or deleted, plus a flag for whether you touched it too.
+The app keeps a manifest of SHA-256 hashes at `~/.general-browser/ui-manifest.json`. At each launch it re-hashes the bundled files and compares them. Files get tagged added, modified, or deleted. It also checks whether your copy diverged, so conflicts are marked.
 
-When you click **Open** on the UI Update banner, the app writes `~/.general-browser/UPDATE.md` (human-readable) and `~/.general-browser/pending-update.yml` (machine-readable) and reveals the directory. Running `/update-ui` in an agent from that directory reads the pending manifest. Files you haven't modified are overwritten directly from the new built-in source. Files you have modified are where the LLM earns its keep: it reads both the new upstream version and your version, understands the intent of each change, and merges them with your modifications taking priority. If both sides changed the same region, your version wins and a comment is left noting what upstream intended.
+Clicking **Open** on the banner writes `UPDATE.md` (human) and `pending-update.yml` (machine), then reveals the directory. Run `/update-ui` in an agent. Files you didn't touch get overwritten from the bundle. Files you did touch are where the LLM earns its keep. It reads both versions, understands the intent, and merges. Your edits win. If both sides changed the same region, your version stays and a comment notes what upstream intended.
 
-After the merge, clicking **Mark as Resolved** re-baselines the manifest to the current built-in hashes so the cycle resets cleanly for the next update.
+Click **Mark as Resolved** to re-baseline the manifest. The cycle resets for the next update.
 
-This process is intentionally inexact. What ships in an update is code alongside a description of the change and its intention, and the LLM interprets that intention against whatever your copy has become. Two users whose UIs diverged differently will receive the same update and end up with different results. Features may drift. Behavior may shift in subtle ways across installations. This is closer to how genetic code works: changes are grafted onto a living organism, and the outcome depends on what was already there. Every copy of the browser becomes its own lineage.
+This process is inexact by design. Updates ship code alongside a description of the intent. The LLM reads that intent against whatever your copy has become. Two users diverge differently, get the same update, and land in different places. Features drift. Behavior shifts. Closer to genetic code than software: changes graft onto a living organism, and the outcome depends on what was already there. Every copy becomes its own lineage.
 
 ## Structure
 
