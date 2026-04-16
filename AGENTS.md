@@ -2,19 +2,27 @@
 
 Lightweight Electron browser. Page fills the entire window. All UI is behind Cmd+K.
 
-User data lives in `~/.general-browser/` (settings, history, sites, and an optional `sources/` directory for ejected UI). See that directory's `AGENTS.md` for the user-facing layout.
+User data lives in `~/.general-browser/` (settings, history, site rules, and the browser's UI source). See that directory's `AGENTS.md` for the user-facing layout.
+
+## How the UI source works
+
+The overlay UI ships inside the app bundle at `ui/`. On first launch of a packaged build, those files are copied into `~/.general-browser/ui/` and the app reads from there thereafter, so users can edit the files directly, with or without an AI agent.
+
+**Dev mode (`npm start`) reads from this repo's `ui/` directly**, so edits in the source tree render live without any sync step. The user's `~/.general-browser/ui/` is ignored in dev.
+
+When a new version of the app ships with UI changes, the app compares the new built-in files against a manifest of hashes captured at last baseline. The settings view shows a banner when an update is ready; running `/update-ui` in an agent merges upstream changes on top of the user's edits.
 
 ## Structure (this repo)
 
-- `ui/` -- Overlay UI. No build step, plain ES modules with Preact + htm.
-  - `index.html` -- Shell.
-  - `app.js` -- Preact app (address bar, history).
-  - `settings.js` -- Settings view (site rules, source directory, updates).
-  - `style.css` -- Styles (light/dark, oklch, CSS variables in :root).
-  - `lib/` -- Vendored Preact + htm + hooks.
-- `sites/` -- Built-in site rules: custom CSS/JS injected into pages by URL pattern. Seeded into `~/.general-browser/sites/` on first run.
-  - `sites.yaml` -- Rule definitions (name, enabled, matches, css, js).
-  - `youtube/`, `instagram/`, `twitter/` -- Per-site CSS and JS files.
+- `ui/`: overlay UI. No build step, plain ES modules with Preact + htm.
+  - `index.html`: shell.
+  - `app.js`: Preact app (address bar, history).
+  - `settings.js`: settings view (site rules, UI source, updates).
+  - `style.css`: styles (light/dark, oklch, CSS variables in `:root`).
+  - `lib/`: vendored Preact + htm + hooks.
+- `sites/`: built-in site rules. Seeded into `~/.general-browser/sites/` on first run.
+  - `sites.yaml`: rule definitions (name, enabled, matches, css, js).
+  - `youtube/`, `instagram/`, `twitter/`: per-site CSS and JS files.
 
 ## Site Rules
 
@@ -51,42 +59,3 @@ rules:
 - No build tools. UI is vanilla ES modules importing from `./lib/preact.js`.
 - Use `html` tagged template literals (htm) instead of JSX.
 - Keep it small.
-
-## Applying Updates (/update-ui)
-
-When an `UPDATE.md` file exists in this directory, the browser's built-in files have changed since the user ejected. This file lists which files changed and whether the user modified them.
-
-A machine-readable manifest is also written to `~/.general-browser/pending-update.yml` with this structure:
-
-```yaml
-source_dir: /path/to/sources
-builtin_dir: /path/to/app
-files:
-  - path: ui/app.js
-    status: modified
-    user_modified: true
-  - path: ui/style.css
-    status: modified
-    user_modified: false
-```
-
-### For files the user has NOT modified (`user_modified: false`)
-
-- **modified**: Copy the file from `builtin_dir` to `source_dir`. Safe to overwrite.
-- **added**: Copy the new file from `builtin_dir` to `source_dir`.
-- **deleted**: Delete the file from `source_dir`.
-
-### For files the user HAS modified (`user_modified: true`)
-
-Read both the built-in (new upstream) version and the user's current version. Apply the upstream changes while preserving the user's customizations.
-
-- The user's changes always take priority.
-- Understand the intent of the upstream change and integrate it around the user's modifications.
-- If both sides changed the same area, keep the user's version and add a comment noting what upstream intended.
-- If deleted upstream but user modified, keep the user's file with a comment.
-
-### After applying
-
-Tell the user to click "Mark as Resolved" in the browser settings. This re-baselines the manifest and removes `UPDATE.md`.
-
-Report a summary: files directly updated, files merged, and any needing manual review.

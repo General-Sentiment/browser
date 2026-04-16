@@ -26,22 +26,13 @@ export function SettingsView({ onBack }) {
 
   useEffect(() => { refresh() }, [])
 
-  const eject = async () => {
-    setMessage('Ejecting...')
-    const result = await window.browser.eject()
-    if (result.success) {
-      setMessage(`Ejected ${result.fileCount} files. Reloading...`)
-      refresh()
-    } else {
-      setMessage('Error: ' + result.error)
-    }
-  }
-
   const resetToDefault = async () => {
-    const result = await window.browser.resetSourceDir()
+    const result = await window.browser.resetUI()
     if (result.success) {
       setMessage('Reset to defaults. Reloading...')
       refresh()
+    } else {
+      setMessage('Error: ' + (result.error || 'reset failed'))
     }
   }
 
@@ -94,9 +85,12 @@ export function SettingsView({ onBack }) {
         ${updateStatus?.pending && html`
           <div class="settings-update-banner">
             <span class="settings-update-text">UI Update Available</span>
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.sources)}>Open</button>
+            <button class="settings-btn settings-btn-primary" onClick=${async () => {
+              await window.browser.prepareUpdate()
+              window.browser.openPath(uiPaths.dataDir)
+            }}>Open</button>
           </div>
-          <p class="settings-hint settings-update-hint">The built-in UI has changed since you ejected. Open your source directory in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
+          <p class="settings-hint settings-update-hint">The built-in UI has changed upstream. Open <code>~/.general-browser</code> in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
         `}
 
         ${(appUpdate?.available || updateStatus?.pending) && html`
@@ -123,20 +117,17 @@ export function SettingsView({ onBack }) {
         <hr class="settings-divider" />
 
         <div class="settings-field">
-          <label class="settings-label">Source Directory</label>
-          <p class="settings-hint">${uiPaths.isCustom
-            ? 'Ejected. The app is loading the UI from your sources directory.'
-            : 'Eject to copy the UI into ~/.general-browser/sources/. Edit the files directly or open the folder in Claude Code.'
+          <label class="settings-label">UI Source</label>
+          <p class="settings-hint">${uiPaths.isDev
+            ? 'Dev mode: the app is reading the UI from this repo. Edits to the repo render live.'
+            : 'The app reads its overlay UI from this directory. Edit the files directly, or open the folder in Claude Code and tell it what you want to change.'
           }</p>
 
-          ${uiPaths.isCustom && html`<div class="settings-value">${uiPaths.sources}</div>`}
+          <div class="settings-value">${uiPaths.active}</div>
 
           <div class="settings-actions">
-            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.sources)}>Open</button>
-            ${!uiPaths.isCustom && html`
-              <button class="settings-btn settings-btn-primary" onClick=${eject}>Eject</button>
-            `}
-            ${uiPaths.isCustom && html`
+            <button class="settings-btn settings-btn-primary" onClick=${() => window.browser.openPath(uiPaths.active)}>Open</button>
+            ${!uiPaths.isDev && html`
               <button class="settings-btn" onClick=${resetToDefault}>Reset to Default</button>
             `}
           </div>
@@ -267,13 +258,13 @@ export function SettingsView({ onBack }) {
         <details class="settings-details">
           <summary class="settings-details-summary">How to install updates</summary>
           <div class="settings-details-body">
-            <p>Eject the UI to a directory you control, then open that directory in an AI coding agent:</p>
+            <p>When the built-in UI changes, open <code>~/.general-browser</code> in an AI coding agent:</p>
             <ul>
-              <li><strong>Claude Code</strong> — run <code>/update-ui</code></li>
-              <li><strong>Codex</strong> — ask it to merge upstream changes from the built-in UI</li>
-              <li><strong>Any agent</strong> — point it at your source directory and ask it to update</li>
+              <li><strong>Claude Code</strong>: run <code>/update-ui</code></li>
+              <li><strong>Codex</strong>: ask it to merge upstream changes from the built-in UI</li>
+              <li><strong>Any agent</strong>: point it at the directory and ask it to apply <code>UPDATE.md</code></li>
             </ul>
-            <p>The agent will diff the built-in files against your customized copies and merge changes, preserving your modifications.</p>
+            <p>The agent diffs the built-in files against your copies and merges changes, preserving your modifications.</p>
           </div>
         </details>
 

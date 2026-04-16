@@ -42,15 +42,17 @@ const HOME = require('os').homedir()
 const LEGACY_DATA_DIR = path.join(HOME, '.browser')
 const DATA_DIR = path.join(HOME, '.general-browser')
 const SITES_DIR = path.join(DATA_DIR, 'sites')
-const SOURCES_DIR = path.join(DATA_DIR, 'sources')
+const USER_UI_DIR = path.join(DATA_DIR, 'ui')
+const LEGACY_SOURCES_DIR = path.join(DATA_DIR, 'sources')
 const SETTINGS_PATH = path.join(DATA_DIR, 'settings.yml')
 const HISTORY_PATH = path.join(DATA_DIR, 'history.json')
 const MANIFEST_PATH = path.join(DATA_DIR, 'ui-manifest.json')
 const PENDING_UPDATE_PATH = path.join(DATA_DIR, 'pending-update.yml')
+const UPDATE_MD_PATH = path.join(DATA_DIR, 'UPDATE.md')
 const WINDOW_STATE_PATH = path.join(DATA_DIR, 'window-state.json')
 const ROOT_AGENTS_PATH = path.join(DATA_DIR, 'AGENTS.md')
 const SITES_AGENTS_PATH = path.join(SITES_DIR, 'AGENTS.md')
-const SOURCES_AGENTS_PATH = path.join(SOURCES_DIR, 'AGENTS.md')
+const UI_AGENTS_PATH = path.join(USER_UI_DIR, 'AGENTS.md')
 const BUILTIN_UI = path.join(__dirname, 'ui')
 const BUILTIN_SITES = path.join(__dirname, 'sites')
 
@@ -67,21 +69,50 @@ search: https://www.google.com/search?q=$s
 # color_mode: system
 `
 
-const ROOT_AGENTS_MD = `# General Browser — User Data
+const ROOT_AGENTS_MD = `# General Browser: User Data
 
-This directory holds your General Browser configuration, site rules, and (optionally) the ejected browser UI source.
-
-The browser is a minimal, fully modifiable shell. Everything the user can customize lives here.
+This directory holds your General Browser configuration, site rules, and the browser's UI source. Everything is fully modifiable.
 
 ## Structure
 
-- [sites/](sites/AGENTS.md) — site rules: custom CSS/JS injected into pages by URL pattern.
-- [sources/](sources/AGENTS.md) — ejected browser UI source (empty until ejected from Settings).
-- \`settings.yml\` — browser preferences (start page, search engine, color mode).
-- \`history.json\` — recent browsing history (up to 1000 entries).
-- \`window-state.json\` — last window size and position.
+- [ui/](ui/AGENTS.md): the browser's overlay UI (address bar, settings). Edit freely.
+- [sites/](sites/AGENTS.md): site rules. Custom CSS/JS injected into pages by URL pattern.
+- \`settings.yml\`: browser preferences (start page, search engine, color mode).
+- \`history.json\`: recent browsing history (up to 1000 entries).
+- \`window-state.json\`: last window size and position.
+- \`ui-manifest.json\`: baseline hashes of UI files, used to detect upstream changes.
+- \`UPDATE.md\` / \`pending-update.yml\`: present only when an upstream UI update is ready to merge.
 
 When editing anything in this directory, read the AGENTS.md in the relevant subdirectory first.
+
+## Applying Updates (/update-ui)
+
+When \`UPDATE.md\` appears in this directory, the browser's built-in UI has changed upstream. A machine-readable manifest is written to \`pending-update.yml\`:
+
+\`\`\`yaml
+source_dir: /path/to/~/.general-browser/ui
+builtin_dir: /path/to/app/ui
+files:
+  - path: app.js
+    status: modified
+    user_modified: true
+\`\`\`
+
+### For files the user has NOT modified (\`user_modified: false\`)
+
+- **modified**: copy from \`builtin_dir\` to \`source_dir\`. Safe to overwrite.
+- **added**: copy the new file from \`builtin_dir\`.
+- **deleted**: delete the file from \`source_dir\`.
+
+### For files the user HAS modified (\`user_modified: true\`)
+
+Read both the built-in (new upstream) version and the user's current version. Apply upstream changes while preserving the user's customizations.
+
+- User changes always take priority.
+- If both sides changed the same region, keep the user's version and add a comment noting what upstream intended.
+- If upstream deleted it but the user modified it, keep the user's file with a comment.
+
+After applying, tell the user to click "Mark as Resolved" in browser Settings. This re-baselines the manifest and removes \`UPDATE.md\`.
 `
 
 const SITES_AGENTS_MD = `# Site Rules
@@ -121,56 +152,26 @@ rules:
 Changes are picked up automatically — no restart needed.
 `
 
-const SOURCES_AGENTS_MD = `# Sources
+const UI_AGENTS_MD = `# Browser UI
 
-This directory holds the ejected browser UI source. It is empty until you eject from the browser's Settings view.
-
-When populated, the browser loads its UI from here instead of the copy bundled with the app. Edit the files directly; reload the window to see changes.
+This directory holds the browser's overlay UI source. The app loads these files directly. Edit them and reload the overlay (Cmd+R while Cmd+K is open) to see changes.
 
 ## Structure
 
 \`\`\`
-ui/
-  index.html     Shell
-  app.js         Preact overlay app (address bar, history)
-  settings.js    Settings view
-  error.html     Error page for failed loads
-  style.css      Styles (light/dark, oklch)
-  lib/           Vendored Preact + htm + hooks
+index.html     Shell
+app.js         Preact overlay app (address bar, history)
+settings.js    Settings view
+error.html     Error page for failed loads
+style.css      Styles (light/dark, oklch)
+lib/           Vendored Preact + htm + hooks
 \`\`\`
 
 - No build step, no transpiler. Plain ES modules using Preact + htm.
 - Use the \`html\` tagged template literal (htm) instead of JSX.
 - Keep it small.
 
-## Applying Updates (/update-ui)
-
-When \`UPDATE.md\` appears in this directory, the browser's built-in UI has changed since the user ejected. A machine-readable manifest is also written to \`~/.general-browser/pending-update.yml\`:
-
-\`\`\`yaml
-source_dir: /path/to/sources
-builtin_dir: /path/to/app
-files:
-  - path: ui/app.js
-    status: modified
-    user_modified: true
-\`\`\`
-
-### For files the user has NOT modified (\`user_modified: false\`)
-
-- **modified**: copy from \`builtin_dir\` to \`source_dir\`. Safe to overwrite.
-- **added**: copy the new file from \`builtin_dir\`.
-- **deleted**: delete the file from \`source_dir\`.
-
-### For files the user HAS modified (\`user_modified: true\`)
-
-Read both the built-in (new upstream) version and the user's current version. Apply upstream changes while preserving the user's customizations.
-
-- User changes always take priority.
-- If both sides changed the same region, keep the user's version and add a comment noting what upstream intended.
-- If upstream deleted it but the user modified it, keep the user's file with a comment.
-
-After applying, tell the user to click "Mark as Resolved" in browser Settings. This re-baselines the manifest and removes \`UPDATE.md\`.
+When the app updates and upstream UI files change, the parent directory's AGENTS.md describes the merge flow.
 `
 
 function writeIfMissing(filePath, contents) {
@@ -188,20 +189,80 @@ function migrateLegacyDataDir() {
   }
 }
 
+function migrateSourcesLayout() {
+  // One-time migration from the old ~/.general-browser/sources/ layout.
+  // Previously the UI was only present after "ejecting" and lived at sources/ui.
+  // Now it always lives at ~/.general-browser/ui/.
+  if (!fs.existsSync(LEGACY_SOURCES_DIR)) return
+
+  const legacyUI = path.join(LEGACY_SOURCES_DIR, 'ui')
+  if (fs.existsSync(legacyUI) && !fs.existsSync(USER_UI_DIR)) {
+    try { fs.renameSync(legacyUI, USER_UI_DIR) } catch {}
+  }
+  const legacyUpdateMd = path.join(LEGACY_SOURCES_DIR, 'UPDATE.md')
+  if (fs.existsSync(legacyUpdateMd) && !fs.existsSync(UPDATE_MD_PATH)) {
+    try { fs.renameSync(legacyUpdateMd, UPDATE_MD_PATH) } catch {}
+  }
+  // Drop the legacy sources/AGENTS.md (content is now covered by the root and ui AGENTS.md).
+  const legacyAgents = path.join(LEGACY_SOURCES_DIR, 'AGENTS.md')
+  if (fs.existsSync(legacyAgents)) {
+    try { fs.unlinkSync(legacyAgents) } catch {}
+  }
+  try { fs.rmdirSync(LEGACY_SOURCES_DIR) } catch {}
+
+  // The old manifest stored paths with a "ui/" prefix (e.g. "ui/app.js").
+  // Rewrite to flat paths so they line up with the new layout.
+  if (fs.existsSync(MANIFEST_PATH)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
+      if (manifest.files && Object.keys(manifest.files).some(k => k.startsWith('ui/'))) {
+        const rewritten = {}
+        for (const [k, v] of Object.entries(manifest.files)) {
+          rewritten[k.startsWith('ui/') ? k.slice(3) : k] = v
+        }
+        manifest.files = rewritten
+        fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+      }
+    } catch {}
+  }
+}
+
+function writeInitialManifest() {
+  const manifest = {
+    baselined_at: new Date().toISOString(),
+    builtin_version: require('./package.json').version,
+    files: walkDir(BUILTIN_UI),
+  }
+  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+}
+
 function ensureDataDir() {
   migrateLegacyDataDir()
   fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.mkdirSync(SOURCES_DIR, { recursive: true })
+  migrateSourcesLayout()
 
-  // Seed SITES_DIR from the built-in sites the first time we run
+  // Seed SITES_DIR from the built-in sites the first time we run.
   if (!fs.existsSync(SITES_DIR)) {
     copyDirRecursive(BUILTIN_SITES, SITES_DIR)
+  }
+
+  // In packaged builds, the app reads the UI from ~/.general-browser/ui/.
+  // Seed it from the bundle the first time we run. In dev runs we skip this;
+  // the app reads directly from the repo's ui/ so edits render live.
+  if (app.isPackaged) {
+    if (!fs.existsSync(USER_UI_DIR)) {
+      copyDirRecursive(BUILTIN_UI, USER_UI_DIR)
+      writeInitialManifest()
+    } else if (!fs.existsSync(MANIFEST_PATH)) {
+      // Directory survived a downgrade or a manual copy; baseline it now.
+      writeInitialManifest()
+    }
   }
 
   writeIfMissing(SETTINGS_PATH, DEFAULT_SETTINGS_YML)
   writeIfMissing(ROOT_AGENTS_PATH, ROOT_AGENTS_MD)
   writeIfMissing(SITES_AGENTS_PATH, SITES_AGENTS_MD)
-  writeIfMissing(SOURCES_AGENTS_PATH, SOURCES_AGENTS_MD)
+  if (fs.existsSync(USER_UI_DIR)) writeIfMissing(UI_AGENTS_PATH, UI_AGENTS_MD)
 }
 
 function loadSettings() {
@@ -250,13 +311,12 @@ function addToHistory(url, title) {
   saveHistory()
 }
 
-// ── UI resolution chain ────────────────────────────────────────────────────────
-function hasEjectedUI() {
-  return fs.existsSync(path.join(SOURCES_DIR, 'ui', 'index.html'))
-}
-
+// ── UI resolution ──────────────────────────────────────────────────────────────
+// Packaged builds read the UI from ~/.general-browser/ui/ (the user's working
+// copy, seeded from the bundle on first launch). Dev runs read directly from
+// the repo's ui/ so source edits render live without a sync step.
 function getUIPath() {
-  return hasEjectedUI() ? path.join(SOURCES_DIR, 'ui') : BUILTIN_UI
+  return app.isPackaged ? USER_UI_DIR : BUILTIN_UI
 }
 
 function getSitesPath() {
@@ -301,12 +361,14 @@ function copyDirRecursive(src, dest) {
 }
 
 function checkForUIUpdates() {
-  if (!hasEjectedUI() || !fs.existsSync(MANIFEST_PATH)) {
+  // In dev we're editing the source directly; there's nothing to "update."
+  if (!app.isPackaged) return { pending: false }
+  if (!fs.existsSync(USER_UI_DIR) || !fs.existsSync(MANIFEST_PATH)) {
     return { pending: false }
   }
   try {
     const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'))
-    const builtinHashes = walkDir(BUILTIN_UI, 'ui')
+    const builtinHashes = walkDir(BUILTIN_UI)
     const files = []
 
     for (const [rel, hash] of Object.entries(builtinHashes)) {
@@ -314,7 +376,7 @@ function checkForUIUpdates() {
       if (!manifestHash) {
         files.push({ path: rel, status: 'added', user_modified: false })
       } else if (hash !== manifestHash) {
-        const userFile = path.join(SOURCES_DIR, rel)
+        const userFile = path.join(USER_UI_DIR, rel)
         let userModified = false
         if (fs.existsSync(userFile)) {
           userModified = hashFile(userFile) !== manifestHash
@@ -325,7 +387,7 @@ function checkForUIUpdates() {
 
     for (const rel of Object.keys(manifest.files || {})) {
       if (!builtinHashes[rel]) {
-        const userFile = path.join(SOURCES_DIR, rel)
+        const userFile = path.join(USER_UI_DIR, rel)
         const userModified = fs.existsSync(userFile) && hashFile(userFile) !== manifest.files[rel]
         files.push({ path: rel, status: 'deleted', user_modified: userModified })
       }
@@ -709,42 +771,18 @@ ipcMain.handle('save-settings', (e, newSettings) => {
   saveSettings(newSettings)
 })
 
-ipcMain.handle('eject', () => {
-  try {
-    // Copy the built-in UI into ~/.general-browser/sources/ui.
-    // Sites already live at ~/.general-browser/sites and are edited in place.
-    copyDirRecursive(BUILTIN_UI, path.join(SOURCES_DIR, 'ui'))
-    const manifest = {
-      ejected_at: new Date().toISOString(),
-      builtin_version: require('./package.json').version,
-      files: walkDir(BUILTIN_UI, 'ui'),
-    }
-    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
-    startWatchers()
-    for (const state of windows.values()) {
-      if (state.overlayView) {
-        state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
-      }
-    }
-    return { success: true, fileCount: Object.keys(manifest.files).length }
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
-})
-
 ipcMain.handle('get-update-status', () => checkForUIUpdates())
 
 ipcMain.handle('prepare-update', () => {
   const status = checkForUIUpdates()
-  if (!status.pending || !hasEjectedUI()) return { success: false, error: 'No updates' }
-  const updatePath = path.join(SOURCES_DIR, 'UPDATE.md')
+  if (!status.pending) return { success: false, error: 'No updates' }
   const lines = [
     '# Pending Update',
     '',
     `Generated: ${new Date().toISOString()}`,
     `Version: ${require('./package.json').version}`,
-    `Source: ${SOURCES_DIR}`,
-    `Built-in: ${path.join(__dirname)}`,
+    `Source: ${USER_UI_DIR}`,
+    `Built-in: ${BUILTIN_UI}`,
     '',
     '## Changed Files',
     '',
@@ -760,28 +798,22 @@ ipcMain.handle('prepare-update', () => {
   lines.push('Run `/update-ui` in Claude Code from this directory, or apply manually.')
   lines.push('After applying, click "Mark as Resolved" in browser settings.')
   lines.push('')
-  fs.writeFileSync(updatePath, lines.join('\n'))
-  // Also write the machine-readable version for the skill
+  fs.writeFileSync(UPDATE_MD_PATH, lines.join('\n'))
+  // Machine-readable companion for the /update-ui skill.
   fs.writeFileSync(PENDING_UPDATE_PATH, yaml.dump({
     from_version: require('./package.json').version,
-    source_dir: SOURCES_DIR,
-    builtin_dir: path.join(__dirname),
+    source_dir: USER_UI_DIR,
+    builtin_dir: BUILTIN_UI,
     files: status.files,
   }))
-  return { success: true, path: updatePath }
+  return { success: true, path: UPDATE_MD_PATH }
 })
 
 ipcMain.handle('finalize-update', () => {
   try {
-    const manifest = {
-      ejected_at: new Date().toISOString(),
-      builtin_version: require('./package.json').version,
-      files: walkDir(BUILTIN_UI, 'ui'),
-    }
-    fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2))
+    writeInitialManifest()
     if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
-    const updateMd = path.join(SOURCES_DIR, 'UPDATE.md')
-    if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
+    if (fs.existsSync(UPDATE_MD_PATH)) fs.unlinkSync(UPDATE_MD_PATH)
     return { success: true }
   } catch (err) {
     return { success: false, error: err.message }
@@ -851,19 +883,20 @@ ipcMain.handle('open-path', async (_e, p) => {
   if (err) console.error('open-path failed:', err, 'path:', p, 'resolved:', resolveForShell(p))
 })
 
-ipcMain.handle('reset-source-dir', () => {
-  // Remove the ejected UI copy so the browser reverts to the built-in shell.
-  // The sites directory is left alone.
-  const ejectedUI = path.join(SOURCES_DIR, 'ui')
-  if (fs.existsSync(ejectedUI)) fs.rmSync(ejectedUI, { recursive: true, force: true })
-  if (fs.existsSync(MANIFEST_PATH)) fs.unlinkSync(MANIFEST_PATH)
+ipcMain.handle('reset-ui', () => {
+  // Throw away local edits and re-seed ~/.general-browser/ui/ from the bundle.
+  // Sites are left alone.
+  if (!app.isPackaged) return { success: false, error: 'Not available in dev mode' }
+  if (fs.existsSync(USER_UI_DIR)) fs.rmSync(USER_UI_DIR, { recursive: true, force: true })
+  copyDirRecursive(BUILTIN_UI, USER_UI_DIR)
+  writeInitialManifest()
+  writeIfMissing(UI_AGENTS_PATH, UI_AGENTS_MD)
   if (fs.existsSync(PENDING_UPDATE_PATH)) fs.unlinkSync(PENDING_UPDATE_PATH)
-  const updateMd = path.join(SOURCES_DIR, 'UPDATE.md')
-  if (fs.existsSync(updateMd)) fs.unlinkSync(updateMd)
+  if (fs.existsSync(UPDATE_MD_PATH)) fs.unlinkSync(UPDATE_MD_PATH)
   startWatchers()
   for (const state of windows.values()) {
     if (state.overlayView) {
-      state.overlayView.webContents.loadFile(path.join(BUILTIN_UI, 'index.html'))
+      state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
     }
   }
   return { success: true }
@@ -884,8 +917,9 @@ ipcMain.handle('set-default-browser', () => {
 ipcMain.handle('get-ui-paths', () => ({
   builtin: BUILTIN_UI,
   active: getUIPath(),
-  sources: SOURCES_DIR,
-  isCustom: hasEjectedUI(),
+  user: USER_UI_DIR,
+  dataDir: DATA_DIR,
+  isDev: !app.isPackaged,
 }))
 
 // ── Catch-all: redirect window.open into a new window ───────────────────────

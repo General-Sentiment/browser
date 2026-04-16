@@ -19,7 +19,6 @@ contextBridge.exposeInMainWorld('browser', {
 
   getSettings:     ()    => ipcRenderer.invoke('get-settings'),
   saveSettings:    (s)   => ipcRenderer.invoke('save-settings', s),
-  eject:           ()    => ipcRenderer.invoke('eject'),
   getUpdateStatus: ()    => ipcRenderer.invoke('get-update-status'),
   prepareUpdate:   ()    => ipcRenderer.invoke('prepare-update'),
   finalizeUpdate:  ()    => ipcRenderer.invoke('finalize-update'),
@@ -29,7 +28,7 @@ contextBridge.exposeInMainWorld('browser', {
   openSitesConfig: ()    => ipcRenderer.invoke('open-sites-config'),
   openSitesDir:    ()    => ipcRenderer.invoke('open-sites-dir'),
   openPath:        (p)   => ipcRenderer.invoke('open-path', p),
-  resetSourceDir:  ()    => ipcRenderer.invoke('reset-source-dir'),
+  resetUI:         ()    => ipcRenderer.invoke('reset-ui'),
   isDefaultBrowser: ()   => ipcRenderer.invoke('is-default-browser'),
   setDefaultBrowser: ()  => ipcRenderer.invoke('set-default-browser'),
   getUIPaths:      ()    => ipcRenderer.invoke('get-ui-paths'),
