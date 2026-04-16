@@ -50,9 +50,11 @@ Open the folder in an AI coding agent. The `AGENTS.md` files explain the rest.
 
 ## Site Rules
 
-Site rules inject CSS and JS into pages you visit. Skip the ad blocker. Intervene directly. Hide what you don't want. Restyle what you do. Add behavior where it's missing. The browser is a thin shell around your preferences.
+Site rules inject CSS and JS into pages you visit. They follow the [Fence](https://generalsentiment.co/fence/) pattern: hide what pulls you in, restyle what stays, redirect algorithmic feeds to chronological ones. Skip the ad blocker. Intervene directly.
 
-Rules live in `~/.general-browser/sites/sites.yaml`. CSS and JS sit alongside them in `~/.general-browser/sites/`. The app ships with rules for [Fence](https://generalsentiment.co/fence/), YouTube, and Instagram. Toggle them from the gear icon in the overlay.
+The browser ships with rules for YouTube, Instagram, and X (Twitter) out of the box. Each one strips the algorithmic feed and related UI, and where possible redirects you to the chronological timeline. Toggle them from the gear icon in the overlay.
+
+Rules live in `~/.general-browser/sites/sites.yaml`. CSS and JS sit alongside them in `~/.general-browser/sites/`.
 
 ```yaml
 rules:
