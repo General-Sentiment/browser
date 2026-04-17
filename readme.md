@@ -2,7 +2,13 @@
 
 A minimal fully modifiable browser with (basically) no interface. One page per window. Everything lives behind a single Cmd+K overlay: address bar, history, settings.
 
+Built with [General App](https://generalsentiment.co/app/).
+
 **macOS only for now.**
+
+## Stack
+
+Electron shell. Preact + htm (no JSX). Plain JavaScript, native ES modules. No build step.
 
 ## Philosophy
 
