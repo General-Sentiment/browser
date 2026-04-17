@@ -650,7 +650,16 @@ function createWindowState({ showOverlay = false } = {}) {
   })
 
   state.win.on('closed', () => {
+    // BrowserWindow does not auto-destroy WebContentsView children added to
+    // contentView, so their renderer processes keep running (audio continues
+    // playing on YouTube, etc). Close them explicitly.
+    for (const v of [state.view, state.overlayView]) {
+      const wc = v?.webContents
+      if (wc && !wc.isDestroyed()) wc.close()
+    }
     windows.delete(state.overlayView.webContents.id)
+    state.view = null
+    state.overlayView = null
     state.win = null
   })
 
@@ -837,31 +846,71 @@ ipcMain.handle('finalize-update', () => {
 })
 
 // ── App (shell) auto-update IPC ──────────────────────────────────────────────
+// Tracks the most recent updater state so freshly-opened settings windows can
+// reflect a download that finished earlier in this session.
+let appUpdateState = { status: 'idle' }
+
+function broadcastAppUpdate(state) {
+  appUpdateState = state
+  for (const s of windows.values()) {
+    const wc = s.overlayView?.webContents
+    if (wc && !wc.isDestroyed()) wc.send('app-update-state', state)
+  }
+}
+
+autoUpdater.on('update-available', (info) => {
+  broadcastAppUpdate({ status: 'available', version: info?.version })
+})
+autoUpdater.on('update-not-available', () => {
+  broadcastAppUpdate({ status: 'idle' })
+})
+autoUpdater.on('update-downloaded', (info) => {
+  broadcastAppUpdate({ status: 'ready', version: info?.version })
+})
+autoUpdater.on('download-progress', (p) => {
+  broadcastAppUpdate({ status: 'downloading', percent: p?.percent, version: appUpdateState.version })
+})
+
+ipcMain.handle('get-app-update-state', () => appUpdateState)
+
 ipcMain.handle('check-for-app-update', async () => {
+  if (!app.isPackaged) return { available: false, error: 'Updates disabled in dev mode' }
   try {
     const result = await autoUpdater.checkForUpdates()
     if (!result?.updateInfo) return { available: false }
-    return {
-      available: result.updateInfo.version !== app.getVersion(),
-      version: result.updateInfo.version,
-      currentVersion: app.getVersion(),
-    }
+    const available = result.updateInfo.version !== app.getVersion()
+    if (available) broadcastAppUpdate({ status: 'available', version: result.updateInfo.version })
+    return { available, version: result.updateInfo.version, currentVersion: app.getVersion() }
   } catch (err) {
     return { available: false, error: err.message }
   }
 })
 
 ipcMain.handle('download-app-update', async () => {
+  if (!app.isPackaged) return { success: false, error: 'Updates disabled in dev mode' }
   try {
+    broadcastAppUpdate({ status: 'downloading', percent: 0, version: appUpdateState.version })
     await autoUpdater.downloadUpdate()
     return { success: true }
   } catch (err) {
+    broadcastAppUpdate({ status: 'error', error: err.message })
     return { success: false, error: err.message }
   }
 })
 
 ipcMain.handle('install-app-update', () => {
-  autoUpdater.quitAndInstall(false, true)
+  if (!app.isPackaged) return { success: false, error: 'Updates disabled in dev mode' }
+  if (appUpdateState.status !== 'ready') {
+    return { success: false, error: 'No update downloaded yet' }
+  }
+  // quitAndInstall can be a no-op if windows cancel close; force-close first.
+  setImmediate(() => {
+    for (const s of windows.values()) {
+      try { s.win?.destroy() } catch {}
+    }
+    autoUpdater.quitAndInstall(false, true)
+  })
+  return { success: true }
 })
 
 ipcMain.handle('get-app-version', () => app.getVersion())
@@ -1139,6 +1188,7 @@ app.whenReady().then(() => {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-update error:', err)
+    broadcastAppUpdate({ status: 'error', error: err?.message || String(err) })
   })
 
   // Check on launch, then every 4 hours

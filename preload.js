@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('browser', {
   checkForAppUpdate:  () => ipcRenderer.invoke('check-for-app-update'),
   downloadAppUpdate:  () => ipcRenderer.invoke('download-app-update'),
   installAppUpdate:   () => ipcRenderer.invoke('install-app-update'),
+  getAppUpdateState:  () => ipcRenderer.invoke('get-app-update-state'),
+  onAppUpdateState:   (cb) => { ipcRenderer.removeAllListeners('app-update-state'); ipcRenderer.on('app-update-state', (_e, s) => cb(s)) },
   getAppVersion:      () => ipcRenderer.invoke('get-app-version'),
   isDevMode:          () => ipcRenderer.invoke('is-dev-mode'),
 

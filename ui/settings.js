@@ -7,7 +7,8 @@ export function SettingsView({ onBack }) {
   const [siteRules, setSiteRules] = useState(null)
   const [isDefault, setIsDefault] = useState(null)
   const [message, setMessage] = useState('')
-  const [appUpdate, setAppUpdate] = useState(null) // { available, version, downloading, ready }
+  // { status: 'idle' | 'available' | 'downloading' | 'ready' | 'error', version?, percent?, error? }
+  const [appUpdate, setAppUpdate] = useState({ status: 'idle' })
   const [appVersion, setAppVersion] = useState('')
   const [devMode, setDevMode] = useState(false)
 
@@ -19,12 +20,16 @@ export function SettingsView({ onBack }) {
     window.browser.isDefaultBrowser().then(setIsDefault)
     window.browser.getAppVersion().then(setAppVersion)
     window.browser.isDevMode().then(setDevMode)
+    window.browser.getAppUpdateState().then(s => { if (s) setAppUpdate(s) })
     window.browser.checkForAppUpdate().then(r => {
-      if (r.available) setAppUpdate({ available: true, version: r.version })
+      if (r.available) setAppUpdate(u => u.status === 'ready' ? u : { status: 'available', version: r.version })
     })
   }
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    refresh()
+    window.browser.onAppUpdateState(setAppUpdate)
+  }, [])
 
   const resetToDefault = async () => {
     const result = await window.browser.resetUI()
@@ -44,12 +49,6 @@ export function SettingsView({ onBack }) {
     setSiteRules(updated)
   }
 
-  const removeRule = async (i) => {
-    const updated = { ...siteRules, rules: siteRules.rules.filter((_, j) => j !== i) }
-    await window.browser.saveSiteRules(updated)
-    setSiteRules(updated)
-  }
-
   if (!settings || !uiPaths) return html`<div class="settings-view"><div class="settings-loading">Loading...</div></div>`
 
   return html`
@@ -65,21 +64,37 @@ export function SettingsView({ onBack }) {
 
       <div class="settings-body">
 
-        ${appUpdate?.available && html`
+        ${appUpdate.status !== 'idle' && appUpdate.status !== 'error' && html`
           <div class="settings-update-banner">
-            <span class="settings-update-text">v${appUpdate.version} is available</span>
-            ${appUpdate.ready
-              ? html`<button class="settings-btn settings-btn-primary" onClick=${() => window.browser.installAppUpdate()}>Restart to Update</button>`
-              : appUpdate.downloading
-                ? html`<button class="settings-btn" disabled>Downloading...</button>`
+            <span class="settings-update-text">${appUpdate.status === 'ready'
+              ? `v${appUpdate.version} ready to install`
+              : `v${appUpdate.version || ''} is available`}</span>
+            ${appUpdate.status === 'ready'
+              ? html`<button class="settings-btn settings-btn-primary" onClick=${async () => {
+                  const r = await window.browser.installAppUpdate()
+                  if (r && !r.success) setAppUpdate({ status: 'error', error: r.error })
+                }}>Restart to Update</button>`
+              : appUpdate.status === 'downloading'
+                ? html`<button class="settings-btn" disabled>${appUpdate.percent
+                    ? `Downloading ${Math.round(appUpdate.percent)}%`
+                    : 'Downloading...'}</button>`
                 : html`<button class="settings-btn settings-btn-primary" onClick=${async () => {
-                    setAppUpdate(u => ({ ...u, downloading: true }))
                     const result = await window.browser.downloadAppUpdate()
-                    if (result.success) setAppUpdate(u => ({ ...u, downloading: false, ready: true }))
-                    else setAppUpdate(u => ({ ...u, downloading: false }))
+                    if (!result.success) setAppUpdate({ status: 'error', error: result.error })
                   }}>Update</button>`
             }
           </div>
+        `}
+        ${appUpdate.status === 'error' && html`
+          <div class="settings-update-banner">
+            <span class="settings-update-text">Update failed</span>
+            <button class="settings-btn settings-btn-primary" onClick=${async () => {
+              setAppUpdate({ status: 'idle' })
+              const r = await window.browser.checkForAppUpdate()
+              if (r.available) setAppUpdate({ status: 'available', version: r.version })
+            }}>Retry</button>
+          </div>
+          ${appUpdate.error && html`<p class="settings-hint settings-update-hint">${appUpdate.error}</p>`}
         `}
 
         ${updateStatus?.pending && html`
@@ -93,7 +108,7 @@ export function SettingsView({ onBack }) {
           <p class="settings-hint settings-update-hint">The built-in UI has changed upstream. Open <code>~/.general-browser</code> in Claude Code, Codex, or your agent of choice and ask it to merge the update.</p>
         `}
 
-        ${(appUpdate?.available || updateStatus?.pending) && html`
+        ${(appUpdate.status !== 'idle' || updateStatus?.pending) && html`
           <hr class="settings-divider" />
         `}
 
@@ -168,6 +183,10 @@ export function SettingsView({ onBack }) {
                     const file = (rule.css?.[0] || rule.js?.[0])
                     if (file) window.browser.openSiteRuleDir(file)
                   }}>
+                    <span class="rule-info">
+                      <span class="rule-name">${rule.name}</span>
+                      <span class="rule-matches">${rule.matches.join(', ')}</span>
+                    </span>
                     <button class="rule-check ${rule.enabled ? 'checked' : ''}" onClick=${e => { e.stopPropagation(); toggleRule(i) }} aria-label="Toggle rule">
                       ${rule.enabled && html`
                         <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
@@ -175,15 +194,6 @@ export function SettingsView({ onBack }) {
                         </svg>
                       `}
                     </button>
-                    <span class="rule-info">
-                      <span class="rule-name">${rule.name}</span>
-                      <span class="rule-matches">${rule.matches.join(', ')}</span>
-                    </span>
-                    <span class="rule-remove" onClick=${(e) => { e.stopPropagation(); removeRule(i) }} aria-label="Remove">
-                      <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
-                      </svg>
-                    </span>
                   </li>
                 `)}
               </ul>
