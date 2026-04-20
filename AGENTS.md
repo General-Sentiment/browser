@@ -56,9 +56,12 @@ rules:
 
 ## Data API (plugin surface)
 
-The overlay has a scoped CRUD API at `window.browser.data.*`. It is exposed via [preload.js](preload.js) and implemented by the `data-*` IPC handlers in [main.js](main.js). This is the single read/write surface for `~/.general-browser/`. Page webviews have no preload, so no access.
+Two CRUD namespaces, same surface, different scope. Both exposed via [preload.js](preload.js) and implemented by the `data-*` / `fs-*` IPC handlers in [main.js](main.js). Page webviews have no preload, so no access to either.
 
-Core features (settings, history, window state, site rules, UI manifest, update flow) run on the same primitives. There is no privileged internal path. A feature added by a user's agent has the same access as a feature shipped in the app. When adding persistence, use this API. Skip `localStorage` and embedded DBs.
+- `window.browser.data.*` — scoped to `~/.general-browser/`. Relative paths only. Absolute paths and `..` traversal are rejected. Use for app-managed state.
+- `window.browser.fs.*` — unscoped. Accepts absolute paths and `~/…`. Relative paths are rejected. Use when a feature needs files outside the data dir: an Obsidian vault, Desktop, an external project.
+
+Core features (settings, history, window state, site rules, UI manifest, update flow) run on `data.*`. There is no privileged internal path. A feature added by a user's agent has the same access as a feature shipped in the app. When adding persistence inside the data dir, use `data.*`. Skip `localStorage` and embedded DBs.
 
 ```js
 // Text + JSON
@@ -73,21 +76,31 @@ await window.browser.data.readBytes(name)   // { ok, data: Uint8Array }
 await window.browser.data.writeBlob(name, blob)
 await window.browser.data.readBlob(name, type?)  // { ok, data: Blob }
 
+// Markdown with YAML frontmatter (both namespaces)
+await window.browser.fs.writeMarkdown('~/Notes/today.md', { frontmatter, body })
+await window.browser.fs.readMarkdown('~/Notes/today.md')
+// { ok, data: { frontmatter, body } }
+
 // Misc
 await window.browser.data.exists(name)      // { ok, data: boolean }
 await window.browser.data.list(prefix?)     // { ok, data: [{ name, isDirectory }] }
 await window.browser.data.delete(name)
+
+// Anywhere on disk
+await window.browser.fs.read('~/Documents/notes/plan.md')
+await window.browser.fs.list('~/Documents/notes')  // default: ~
 ```
 
-- `name` is relative to `~/.general-browser/`. Absolute paths and `..` traversal are rejected.
+- `data.*` names are relative to `~/.general-browser/`. `fs.*` names are absolute or start with `~/…`.
 - Calls return `{ ok: true, data? }` or `{ ok: false, error }`. No throws.
 - Writes `mkdir -p` the parent automatically.
 - `delete` is recursive.
+- `readMarkdown` returns `{ frontmatter, body }`. Files with no `---` fence read as `{ frontmatter: {}, body: <file> }`. `writeMarkdown` emits the fence only when `frontmatter` has keys. Round-trips through js-yaml, so comments inside YAML are not preserved.
 
 Adding a feature:
 
-1. Pick a sensible path under `~/.general-browser/`. `bookmarks.json`. `reading-list/items.json`. `clips/<id>.png`.
-2. Write through the API. Main-process code calls `dataReadText` / `dataWrite` / etc. UI code calls `window.browser.data.*`. Same primitives underneath.
+1. Pick a sensible path. Under `~/.general-browser/`: `bookmarks.json`, `reading-list/items.json`, `clips/<id>.png`. Outside: wherever makes sense for the user's own files.
+2. Write through the API. Main-process code calls `dataReadText` / `dataWrite` / `fsReadText` / `fsWrite`. UI code calls `window.browser.data.*` / `window.browser.fs.*`. Same primitives underneath.
 3. If the main process needs to react immediately (apply a setting, refresh a list), add a dedicated IPC handler alongside the data API. The data API is the substrate. Handlers like `save-settings` are convenience wrappers that also trigger side effects.
 
 ## Conventions

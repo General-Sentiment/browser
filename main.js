@@ -173,12 +173,15 @@ lib/           Vendored Preact + htm + hooks
 
 ## Persisting feature state
 
-The overlay has a scoped CRUD API at \`window.browser.data.*\` for reading and writing files inside \`~/.general-browser/\`. Use it instead of \`localStorage\` or a database when a feature needs to save state. Page webviews do not have access.
+Two CRUD namespaces. Same surface. Different scope. Page webviews have no preload, so no access to either.
 
-All calls return \`{ ok, data?, error? }\`. Paths are relative to the data dir; \`..\` and absolute paths are rejected.
+- \`window.browser.data.*\` is scoped to \`~/.general-browser/\`. Relative paths only. Absolute paths and \`..\` traversal are rejected. Use for app-managed state: bookmarks, reading lists, saved images, annotations.
+- \`window.browser.fs.*\` is unscoped. Accepts absolute paths and \`~/…\`. Relative paths are rejected. Use when a feature needs files outside the data dir: an Obsidian vault, Desktop, an external project.
+
+Every call returns \`{ ok, data?, error? }\`. No throws.
 
 \`\`\`js
-// Text + JSON
+// App state
 await window.browser.data.writeJSON('bookmarks.json', [{ url, title }])
 const { ok, data } = await window.browser.data.readJSON('bookmarks.json')
 
@@ -188,11 +191,25 @@ await window.browser.data.writeBlob('bookmarks/icons/foo.png', await res.blob())
 const { data: blob } = await window.browser.data.readBlob('bookmarks/icons/foo.png', 'image/png')
 img.src = URL.createObjectURL(blob)
 
+// Markdown with YAML frontmatter, anywhere on disk
+await window.browser.fs.writeMarkdown('~/Notes/2026-04-19.md', {
+  frontmatter: { title: 'Today', tags: ['log'] },
+  body: '# Today\\n\\nNotes…\\n',
+})
+const { data: doc } = await window.browser.fs.readMarkdown('~/Notes/2026-04-19.md')
+// doc.frontmatter -> { title: 'Today', tags: ['log'] }
+// doc.body        -> '# Today\\n\\nNotes…\\n'
+
 // Misc
-await window.browser.data.list('bookmarks/icons')     // [{ name, isDirectory }, …]
-await window.browser.data.exists('bookmarks.json')    // { ok, data: boolean }
+await window.browser.data.list('bookmarks/icons')   // [{ name, isDirectory }, …]
+await window.browser.fs.list('~/Notes')
+await window.browser.data.exists('bookmarks.json')
 await window.browser.data.delete('bookmarks.json')
 \`\`\`
+
+Full surface on each namespace: \`read\`, \`write\`, \`readJSON\`, \`writeJSON\`, \`readBytes\`, \`writeBytes\`, \`readBlob\`, \`writeBlob\`, \`readMarkdown\`, \`writeMarkdown\`, \`delete\`, \`exists\`, \`list\`.
+
+\`readMarkdown\` parses a leading \`---\`-fenced YAML block. Files with no fence read as \`{ frontmatter: {}, body: <file> }\`. \`writeMarkdown({ frontmatter, body })\` emits the fence only when \`frontmatter\` has keys. Round-trips through js-yaml, so comments inside the YAML are not preserved.
 
 When the app updates and upstream UI files change, the parent directory's AGENTS.md describes the merge flow.
 `
@@ -1040,6 +1057,69 @@ ipcMain.handle('data-write-bytes', (_e, name, b)   => wrap(() => { dataWrite(nam
 ipcMain.handle('data-delete',      (_e, name)      => wrap(() => { dataDelete(name); return null }))
 ipcMain.handle('data-exists',      (_e, name)      => wrap(() => dataExists(name)))
 ipcMain.handle('data-list',        (_e, prefix)    => wrap(() => dataList(prefix)))
+
+// ── Filesystem CRUD (window.browser.fs.*) ──────────────────────────────────
+// Unscoped. Accepts absolute paths and `~/` (expanded to the user's home).
+// Relative paths are rejected. Use when a feature needs files outside the
+// data dir: an Obsidian vault, Desktop, an external project. Same
+// { ok, data?, error? } return shape and write/delete semantics as data.*.
+function resolveFsPath(name) {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('path must be a non-empty string')
+  }
+  let p = name
+  if (p === '~') p = HOME
+  else if (p.startsWith('~/')) p = path.join(HOME, p.slice(2))
+  if (!path.isAbsolute(p)) {
+    throw new Error('fs paths must be absolute (start with / or ~/)')
+  }
+  return path.normalize(p)
+}
+
+function fsReadText(name) {
+  return fs.readFileSync(resolveFsPath(name), 'utf8')
+}
+
+function fsReadBytes(name) {
+  const buf = fs.readFileSync(resolveFsPath(name))
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+}
+
+function fsWrite(name, content) {
+  const abs = resolveFsPath(name)
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  if (typeof content === 'string') {
+    fs.writeFileSync(abs, content, 'utf8')
+    return
+  }
+  let buf
+  if (content instanceof Uint8Array) buf = Buffer.from(content.buffer, content.byteOffset, content.byteLength)
+  else if (content instanceof ArrayBuffer) buf = Buffer.from(content)
+  else if (Buffer.isBuffer(content)) buf = content
+  else throw new Error('write() expects a string, Uint8Array, ArrayBuffer, or Buffer')
+  fs.writeFileSync(abs, buf)
+}
+
+function fsDelete(name) {
+  fs.rmSync(resolveFsPath(name), { recursive: true, force: true })
+}
+
+function fsExists(name) {
+  return fs.existsSync(resolveFsPath(name))
+}
+
+function fsList(name) {
+  return fs.readdirSync(resolveFsPath(name), { withFileTypes: true })
+    .map(e => ({ name: e.name, isDirectory: e.isDirectory() }))
+}
+
+ipcMain.handle('fs-read',        (_e, n)    => wrap(() => fsReadText(n)))
+ipcMain.handle('fs-read-bytes',  (_e, n)    => wrap(() => fsReadBytes(n)))
+ipcMain.handle('fs-write',       (_e, n, t) => wrap(() => { fsWrite(n, t); return null }))
+ipcMain.handle('fs-write-bytes', (_e, n, b) => wrap(() => { fsWrite(n, b); return null }))
+ipcMain.handle('fs-delete',      (_e, n)    => wrap(() => { fsDelete(n); return null }))
+ipcMain.handle('fs-exists',      (_e, n)    => wrap(() => fsExists(n)))
+ipcMain.handle('fs-list',        (_e, p)    => wrap(() => fsList(p)))
 
 ipcMain.handle('is-default-browser', () => {
   return app.isDefaultProtocolClient('https')

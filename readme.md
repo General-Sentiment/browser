@@ -78,9 +78,13 @@ Paths are relative to `~/.general-browser/`. In match patterns, `*` matches anyt
 
 ## Plugin architecture
 
-The overlay has a scoped CRUD API at `window.browser.data.*`. Read and write files anywhere inside `~/.general-browser/`. Use it for bookmarks, reading lists, saved images, annotations, whatever you want to persist. Page webviews have no preload, so no access. The boundary is the data dir.
+Two CRUD namespaces. Same surface. Different scope. Page webviews have no preload, so no access.
+
+- `window.browser.data.*` — scoped to `~/.general-browser/`. Relative paths only. Use for app-managed state: bookmarks, reading lists, saved images, annotations.
+- `window.browser.fs.*` — unscoped. Absolute paths or `~/…`. Use when a feature needs files outside the data dir: an Obsidian vault, Desktop, an external project.
 
 ```js
+// App state
 await window.browser.data.writeJSON("bookmarks.json", [{ url, title }]);
 const { ok, data } = await window.browser.data.readJSON("bookmarks.json");
 
@@ -89,11 +93,20 @@ await window.browser.data.writeBlob(
   "bookmarks/icons/foo.png",
   await res.blob(),
 );
+
+// Markdown with YAML frontmatter, anywhere on disk
+await window.browser.fs.writeMarkdown("~/Notes/today.md", {
+  frontmatter: { title: "Today", tags: ["log"] },
+  body: "# Today\n\nNotes…\n",
+});
+const { data: doc } = await window.browser.fs.readMarkdown("~/Notes/today.md");
 ```
 
 There is no privileged internal path. Settings, history, window state, site rules, UI manifest, update flow all run on the same primitives. Ask an agent to build a bookmarking feature and it gets the same access the core code has. The API is the plugin architecture. You build on the same surface the browser is built on.
 
-Path traversal and absolute paths are rejected. All calls return `{ ok, data?, error? }`. The full surface: `read`, `write`, `readJSON`, `writeJSON`, `readBytes`, `writeBytes`, `readBlob`, `writeBlob`, `delete`, `exists`, `list`.
+Every call returns `{ ok, data?, error? }`. `data.*` rejects absolute paths and `..`. `fs.*` rejects relative paths. Full surface on each: `read`, `write`, `readJSON`, `writeJSON`, `readBytes`, `writeBytes`, `readBlob`, `writeBlob`, `readMarkdown`, `writeMarkdown`, `delete`, `exists`, `list`.
+
+`readMarkdown` parses a leading `---`-fenced YAML block and returns `{ frontmatter, body }`. Files with no fence read as `{ frontmatter: {}, body: <file> }`. `writeMarkdown({ frontmatter, body })` emits the fence only when `frontmatter` has keys. Round-trips through js-yaml, so comments inside YAML are not preserved.
 
 ## Customizing the UI
 

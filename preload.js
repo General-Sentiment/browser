@@ -1,38 +1,79 @@
 const { contextBridge, ipcRenderer } = require('electron')
+const yaml = require('js-yaml')
 
-// Scoped CRUD for ~/.general-browser/. Use to persist feature state
-// (bookmarks, reading lists, saved images, etc.) without reaching for
-// localStorage or a separate DB. All paths are relative to the data dir;
-// path traversal and absolute paths are rejected by the main process.
-const data = {
-  read:  (name) => ipcRenderer.invoke('data-read', name),
-  write: (name, text) => ipcRenderer.invoke('data-write', name, text),
+// Two CRUD namespaces, same surface, different scope:
+//   data.*  scoped to ~/.general-browser/  (relative paths only)
+//   fs.*    unscoped                       (absolute paths or ~/...)
+// Use to persist feature state without reaching for localStorage or a
+// separate DB. Page webviews have no preload, so no access.
 
-  readBytes:  (name) => ipcRenderer.invoke('data-read-bytes', name),
-  writeBytes: (name, bytes) => ipcRenderer.invoke('data-write-bytes', name, bytes),
+// YAML frontmatter: `---\n<yaml>\n---\n<body>`. Matches Jekyll / Hugo /
+// Obsidian conventions. An empty or missing block writes no fence. The YAML
+// block is rewritten via js-yaml on write, so comments inside the YAML are
+// not preserved across a round-trip.
+const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
 
-  readJSON: async (name) => {
-    const r = await ipcRenderer.invoke('data-read', name)
-    if (!r.ok) return r
-    try { return { ok: true, data: JSON.parse(r.data) } }
-    catch (err) { return { ok: false, error: err.message } }
-  },
-  writeJSON: (name, obj) => ipcRenderer.invoke('data-write', name, JSON.stringify(obj, null, 2)),
-
-  readBlob: async (name, type) => {
-    const r = await ipcRenderer.invoke('data-read-bytes', name)
-    if (!r.ok) return r
-    return { ok: true, data: new Blob([r.data], type ? { type } : undefined) }
-  },
-  writeBlob: async (name, blob) => {
-    const buf = await blob.arrayBuffer()
-    return ipcRenderer.invoke('data-write-bytes', name, buf)
-  },
-
-  delete: (name) => ipcRenderer.invoke('data-delete', name),
-  exists: (name) => ipcRenderer.invoke('data-exists', name),
-  list:   (prefix) => ipcRenderer.invoke('data-list', prefix || ''),
+function parseMarkdown(text) {
+  const m = FM_RE.exec(text)
+  if (!m) return { frontmatter: {}, body: text }
+  let frontmatter = {}
+  try { frontmatter = yaml.load(m[1]) || {} } catch { frontmatter = {} }
+  return { frontmatter, body: m[2] }
 }
+
+function stringifyMarkdown(doc) {
+  const { frontmatter, body } = doc || {}
+  const hasFm = frontmatter && typeof frontmatter === 'object' && Object.keys(frontmatter).length > 0
+  const fence = hasFm ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n` : ''
+  return fence + (body ?? '')
+}
+
+function makeApi(prefix) {
+  const defaultList = prefix === 'data' ? '' : '~'
+  return {
+    read:       (name)       => ipcRenderer.invoke(`${prefix}-read`, name),
+    write:      (name, text) => ipcRenderer.invoke(`${prefix}-write`, name, text),
+
+    readBytes:  (name)        => ipcRenderer.invoke(`${prefix}-read-bytes`, name),
+    writeBytes: (name, bytes) => ipcRenderer.invoke(`${prefix}-write-bytes`, name, bytes),
+
+    readJSON: async (name) => {
+      const r = await ipcRenderer.invoke(`${prefix}-read`, name)
+      if (!r.ok) return r
+      try { return { ok: true, data: JSON.parse(r.data) } }
+      catch (err) { return { ok: false, error: err.message } }
+    },
+    writeJSON: (name, obj) => ipcRenderer.invoke(`${prefix}-write`, name, JSON.stringify(obj, null, 2)),
+
+    readBlob: async (name, type) => {
+      const r = await ipcRenderer.invoke(`${prefix}-read-bytes`, name)
+      if (!r.ok) return r
+      return { ok: true, data: new Blob([r.data], type ? { type } : undefined) }
+    },
+    writeBlob: async (name, blob) => {
+      const buf = await blob.arrayBuffer()
+      return ipcRenderer.invoke(`${prefix}-write-bytes`, name, buf)
+    },
+
+    readMarkdown: async (name) => {
+      const r = await ipcRenderer.invoke(`${prefix}-read`, name)
+      if (!r.ok) return r
+      try { return { ok: true, data: parseMarkdown(r.data) } }
+      catch (err) { return { ok: false, error: err.message } }
+    },
+    writeMarkdown: (name, doc) => {
+      try { return ipcRenderer.invoke(`${prefix}-write`, name, stringifyMarkdown(doc)) }
+      catch (err) { return Promise.resolve({ ok: false, error: err.message }) }
+    },
+
+    delete: (name)    => ipcRenderer.invoke(`${prefix}-delete`, name),
+    exists: (name)    => ipcRenderer.invoke(`${prefix}-exists`, name),
+    list:   (subpath) => ipcRenderer.invoke(`${prefix}-list`, subpath || defaultList),
+  }
+}
+
+const data = makeApi('data')
+const fs   = makeApi('fs')
 
 contextBridge.exposeInMainWorld('browser', {
   navigate:   (url) => ipcRenderer.invoke('navigate', url),
@@ -77,4 +118,5 @@ contextBridge.exposeInMainWorld('browser', {
   isDevMode:          () => ipcRenderer.invoke('is-dev-mode'),
 
   data,
+  fs,
 })
