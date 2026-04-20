@@ -654,27 +654,45 @@ function createWindowState({ showOverlay = false } = {}) {
   state.win.on('move', saveBounds)
 
   state.win.on('focus', () => {
-    if (state.url && state.overlayView) {
+    if (!state.overlayView) return
+    if (state.url) {
       const ob = state.overlayView.getBounds()
       const wb = state.win.contentView.getBounds()
       if (ob.width === wb.width && ob.height === wb.height) {
-        // Overlay is full-size — leave it
+        // Overlay is full-size, leave it
       } else if (ob.width > 0) {
         state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       }
       state.view.webContents.focus()
+    } else {
+      // Blank tab: re-assert the overlay. After certain focus-switch
+      // sequences the WebContentsView layer can stop painting until its
+      // bounds are set again, and the URL input needs its focus restored
+      // so the user can type without clicking or pressing Cmd+L.
+      fitOverlay(state)
+      state.overlayView.webContents.focus()
+    }
+  })
+
+  const overlayWcId = state.overlayView.webContents.id
+
+  state.win.on('close', () => {
+    // BrowserWindow doesn't auto-destroy WebContentsView children added to
+    // contentView. Their renderer processes keep running after the window
+    // is gone, so the page stays mounted in the background (YouTube audio
+    // continues, timers keep firing). Mute audio synchronously, detach the
+    // view, and close the webContents before destruction.
+    for (const v of [state.view, state.overlayView]) {
+      const wc = v?.webContents
+      if (!wc || wc.isDestroyed()) continue
+      wc.setAudioMuted(true)
+      try { state.win.contentView.removeChildView(v) } catch {}
+      wc.close()
     }
   })
 
   state.win.on('closed', () => {
-    // BrowserWindow does not auto-destroy WebContentsView children added to
-    // contentView, so their renderer processes keep running (audio continues
-    // playing on YouTube, etc). Close them explicitly.
-    for (const v of [state.view, state.overlayView]) {
-      const wc = v?.webContents
-      if (wc && !wc.isDestroyed()) wc.close()
-    }
-    windows.delete(state.overlayView.webContents.id)
+    windows.delete(overlayWcId)
     state.view = null
     state.overlayView = null
     state.win = null
