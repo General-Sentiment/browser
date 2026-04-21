@@ -108,6 +108,8 @@ Every call returns `{ ok, data?, error? }`. `data.*` rejects absolute paths and 
 
 `readMarkdown` parses a leading `---`-fenced YAML block and returns `{ frontmatter, body }`. Files with no fence read as `{ frontmatter: {}, body: <file> }`. `writeMarkdown({ frontmatter, body })` emits the fence only when `frontmatter` has keys. Round-trips through js-yaml, so comments inside YAML are not preserved.
 
+`delete` moves the path to the OS trash (macOS Trash, Windows Recycle Bin, Linux trash) so mistakes are recoverable.
+
 ## Customizing the UI
 
 The overlay UI lives at `~/.general-browser/ui/`, seeded from the app bundle on first launch. Edit the files directly. Or open the folder in an agent and tell it what to change.

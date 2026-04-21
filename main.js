@@ -211,6 +211,8 @@ Full surface on each namespace: \`read\`, \`write\`, \`readJSON\`, \`writeJSON\`
 
 \`readMarkdown\` parses a leading \`---\`-fenced YAML block. Files with no fence read as \`{ frontmatter: {}, body: <file> }\`. \`writeMarkdown({ frontmatter, body })\` emits the fence only when \`frontmatter\` has keys. Round-trips through js-yaml, so comments inside the YAML are not preserved.
 
+\`delete\` moves the path to the OS trash (macOS Trash, Windows Recycle Bin, Linux trash) so mistakes are recoverable. Missing paths succeed silently.
+
 When the app updates and upstream UI files change, the parent directory's AGENTS.md describes the merge flow.
 `
 
@@ -1068,11 +1070,23 @@ function wrap(fn) {
   try { return { ok: true, data: fn() } } catch (err) { return { ok: false, error: err.message } }
 }
 
+// `delete` via the IPC surface moves items to the OS trash so plugins and
+// users can recover mistakes. Internal callers (dataDelete / fsDelete) still
+// hard-delete, which keeps transient plumbing like pending-update.yml out of
+// the user's Trash.
+async function trashPath(abs) {
+  if (!fs.existsSync(abs)) return
+  await shell.trashItem(abs)
+}
+
 ipcMain.handle('data-read',        (_e, name)      => wrap(() => dataReadText(name)))
 ipcMain.handle('data-read-bytes',  (_e, name)      => wrap(() => dataReadBytes(name)))
 ipcMain.handle('data-write',       (_e, name, t)   => wrap(() => { dataWrite(name, t); return null }))
 ipcMain.handle('data-write-bytes', (_e, name, b)   => wrap(() => { dataWrite(name, b); return null }))
-ipcMain.handle('data-delete',      (_e, name)      => wrap(() => { dataDelete(name); return null }))
+ipcMain.handle('data-delete',      async (_e, name) => {
+  try { await trashPath(resolveDataPath(name)); return { ok: true, data: null } }
+  catch (err) { return { ok: false, error: err.message } }
+})
 ipcMain.handle('data-exists',      (_e, name)      => wrap(() => dataExists(name)))
 ipcMain.handle('data-list',        (_e, prefix)    => wrap(() => dataList(prefix)))
 
@@ -1135,7 +1149,10 @@ ipcMain.handle('fs-read',        (_e, n)    => wrap(() => fsReadText(n)))
 ipcMain.handle('fs-read-bytes',  (_e, n)    => wrap(() => fsReadBytes(n)))
 ipcMain.handle('fs-write',       (_e, n, t) => wrap(() => { fsWrite(n, t); return null }))
 ipcMain.handle('fs-write-bytes', (_e, n, b) => wrap(() => { fsWrite(n, b); return null }))
-ipcMain.handle('fs-delete',      (_e, n)    => wrap(() => { fsDelete(n); return null }))
+ipcMain.handle('fs-delete',      async (_e, n) => {
+  try { await trashPath(resolveFsPath(n)); return { ok: true, data: null } }
+  catch (err) { return { ok: false, error: err.message } }
+})
 ipcMain.handle('fs-exists',      (_e, n)    => wrap(() => fsExists(n)))
 ipcMain.handle('fs-list',        (_e, p)    => wrap(() => fsList(p)))
 

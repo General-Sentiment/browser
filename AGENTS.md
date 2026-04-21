@@ -94,7 +94,7 @@ await window.browser.fs.list('~/Documents/notes')  // default: ~
 - `data.*` names are relative to `~/.general-browser/`. `fs.*` names are absolute or start with `~/…`.
 - Calls return `{ ok: true, data? }` or `{ ok: false, error }`. No throws.
 - Writes `mkdir -p` the parent automatically.
-- `delete` is recursive.
+- `delete` moves the path to the OS trash (macOS Trash, Windows Recycle Bin, Linux trash) rather than hard-deleting. Recursive. Missing paths succeed silently.
 - `readMarkdown` returns `{ frontmatter, body }`. Files with no `---` fence read as `{ frontmatter: {}, body: <file> }`. `writeMarkdown` emits the fence only when `frontmatter` has keys. Round-trips through js-yaml, so comments inside YAML are not preserved.
 
 Adding a feature:
