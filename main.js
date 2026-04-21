@@ -30,11 +30,11 @@ app.on('open-url', (event, url) => {
 function openUrlInBrowser(url) {
   // External URLs (Mail, other apps, x-callback) always get a fresh window
   // rather than clobbering whatever the user is currently looking at.
-  const state = openNewWindow(url)
-  if (state?.win) {
-    state.win.show()
-    state.win.focus()
-  }
+  // The window stays hidden until its overlay paints; see createWindowState.
+  // Bring our app to the front so the new window comes up over the app that
+  // handed us the URL, rather than underneath it.
+  if (process.platform === 'darwin') app.focus({ steal: true })
+  openNewWindow(url)
 }
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
@@ -568,6 +568,11 @@ function createWindowState({ showOverlay = false } = {}) {
     width: saved?.width || 1200,
     height: saved?.height || 800,
     minWidth: 414,
+    // Keep the window hidden until we've positioned it and the overlay has
+    // loaded. Otherwise the OS paints it at the default position with our
+    // backgroundColor, then we setPosition() and the overlay fades in on
+    // top — which reads as a flash, especially when the app isn't frontmost.
+    show: false,
     titleBarStyle: 'hidden',
     titleBarOverlay: false,
     windowButtonPosition: buttonPosition,
@@ -701,7 +706,15 @@ function createWindowState({ showOverlay = false } = {}) {
   })
 
   state.overlayView.webContents.on('did-finish-load', () => {
-    setTimeout(() => showOverlayIfBlank(state), 100)
+    setTimeout(() => {
+      showOverlayIfBlank(state)
+      // Reveal the window now that it's positioned and the overlay has
+      // painted. show() also focuses, so a window opened from an external
+      // app comes to front without a visible z-order flicker.
+      if (state.win && !state.win.isDestroyed() && !state.win.isVisible()) {
+        state.win.show()
+      }
+    }, 100)
   })
 
   return state
