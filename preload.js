@@ -1,5 +1,4 @@
 const { contextBridge, ipcRenderer } = require('electron')
-const yaml = require('js-yaml')
 
 // Two CRUD namespaces, same surface, different scope:
 //   data.*  scoped to ~/.general-browser/  (relative paths only)
@@ -7,26 +6,8 @@ const yaml = require('js-yaml')
 // Use to persist feature state without reaching for localStorage or a
 // separate DB. Page webviews have no preload, so no access.
 
-// YAML frontmatter: `---\n<yaml>\n---\n<body>`. Matches Jekyll / Hugo /
-// Obsidian conventions. An empty or missing block writes no fence. The YAML
-// block is rewritten via js-yaml on write, so comments inside the YAML are
-// not preserved across a round-trip.
-const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
-
-function parseMarkdown(text) {
-  const m = FM_RE.exec(text)
-  if (!m) return { frontmatter: {}, body: text }
-  let frontmatter = {}
-  try { frontmatter = yaml.load(m[1]) || {} } catch { frontmatter = {} }
-  return { frontmatter, body: m[2] }
-}
-
-function stringifyMarkdown(doc) {
-  const { frontmatter, body } = doc || {}
-  const hasFm = frontmatter && typeof frontmatter === 'object' && Object.keys(frontmatter).length > 0
-  const fence = hasFm ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n` : ''
-  return fence + (body ?? '')
-}
+// Preload runs sandboxed, so npm modules (e.g. js-yaml) can't be required
+// here. Anything that needs parsing goes through IPC into the main process.
 
 function makeApi(prefix) {
   const defaultList = prefix === 'data' ? '' : '~'
@@ -55,16 +36,8 @@ function makeApi(prefix) {
       return ipcRenderer.invoke(`${prefix}-write-bytes`, name, buf)
     },
 
-    readMarkdown: async (name) => {
-      const r = await ipcRenderer.invoke(`${prefix}-read`, name)
-      if (!r.ok) return r
-      try { return { ok: true, data: parseMarkdown(r.data) } }
-      catch (err) { return { ok: false, error: err.message } }
-    },
-    writeMarkdown: (name, doc) => {
-      try { return ipcRenderer.invoke(`${prefix}-write`, name, stringifyMarkdown(doc)) }
-      catch (err) { return Promise.resolve({ ok: false, error: err.message }) }
-    },
+    readMarkdown:  (name)      => ipcRenderer.invoke(`${prefix}-read-markdown`, name),
+    writeMarkdown: (name, doc) => ipcRenderer.invoke(`${prefix}-write-markdown`, name, doc),
 
     delete: (name)    => ipcRenderer.invoke(`${prefix}-delete`, name),
     exists: (name)    => ipcRenderer.invoke(`${prefix}-exists`, name),

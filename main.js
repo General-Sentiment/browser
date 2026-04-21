@@ -1079,10 +1079,35 @@ async function trashPath(abs) {
   await shell.trashItem(abs)
 }
 
+// Frontmatter parsing stays on the main side because the preload runs
+// sandboxed and can't require() js-yaml. `---`-fenced YAML at the top of
+// the file, Jekyll/Hugo/Obsidian style. Files with no fence read as
+// `{ frontmatter: {}, body: <file> }`; writing with an empty frontmatter
+// emits no fence. Round-trips through js-yaml, so comments inside the
+// YAML are not preserved.
+const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
+
+function parseMarkdown(text) {
+  const m = FM_RE.exec(text)
+  if (!m) return { frontmatter: {}, body: text }
+  let frontmatter = {}
+  try { frontmatter = yaml.load(m[1]) || {} } catch { frontmatter = {} }
+  return { frontmatter, body: m[2] }
+}
+
+function stringifyMarkdown(doc) {
+  const { frontmatter, body } = doc || {}
+  const hasFm = frontmatter && typeof frontmatter === 'object' && Object.keys(frontmatter).length > 0
+  const fence = hasFm ? `---\n${yaml.dump(frontmatter).trimEnd()}\n---\n` : ''
+  return fence + (body ?? '')
+}
+
 ipcMain.handle('data-read',        (_e, name)      => wrap(() => dataReadText(name)))
 ipcMain.handle('data-read-bytes',  (_e, name)      => wrap(() => dataReadBytes(name)))
 ipcMain.handle('data-write',       (_e, name, t)   => wrap(() => { dataWrite(name, t); return null }))
 ipcMain.handle('data-write-bytes', (_e, name, b)   => wrap(() => { dataWrite(name, b); return null }))
+ipcMain.handle('data-read-markdown',  (_e, name)      => wrap(() => parseMarkdown(dataReadText(name))))
+ipcMain.handle('data-write-markdown', (_e, name, doc) => wrap(() => { dataWrite(name, stringifyMarkdown(doc)); return null }))
 ipcMain.handle('data-delete',      async (_e, name) => {
   try { await trashPath(resolveDataPath(name)); return { ok: true, data: null } }
   catch (err) { return { ok: false, error: err.message } }
@@ -1149,6 +1174,8 @@ ipcMain.handle('fs-read',        (_e, n)    => wrap(() => fsReadText(n)))
 ipcMain.handle('fs-read-bytes',  (_e, n)    => wrap(() => fsReadBytes(n)))
 ipcMain.handle('fs-write',       (_e, n, t) => wrap(() => { fsWrite(n, t); return null }))
 ipcMain.handle('fs-write-bytes', (_e, n, b) => wrap(() => { fsWrite(n, b); return null }))
+ipcMain.handle('fs-read-markdown',  (_e, n)      => wrap(() => parseMarkdown(fsReadText(n))))
+ipcMain.handle('fs-write-markdown', (_e, n, doc) => wrap(() => { fsWrite(n, stringifyMarkdown(doc)); return null }))
 ipcMain.handle('fs-delete',      async (_e, n) => {
   try { await trashPath(resolveFsPath(n)); return { ok: true, data: null } }
   catch (err) { return { ok: false, error: err.message } }
