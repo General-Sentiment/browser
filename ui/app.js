@@ -119,15 +119,23 @@ function App() {
   }, [])
 
   useEffect(() => {
+    // Capture phase + refs so this fires regardless of which element has
+    // focus and without depending on possibly-stale React state. Anything
+    // with a loaded URL page falls back to the page on Escape; blank tabs
+    // have nothing to fall back to so we leave the overlay alone.
     const handler = (e) => {
-      if (e.key === 'Escape' && visible && !blankTab) {
-        setVisible(false)
-        window.browser.setOverlayVisible(false)
-      }
+      if (e.key !== 'Escape') return
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      if (blankTabRef.current) return
+      if (!currentUrlRef.current) return
+      e.preventDefault()
+      e.stopPropagation()
+      setVisible(false)
+      window.browser.setOverlayVisible(false)
     }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [visible, blankTab])
+    document.addEventListener('keydown', handler, true)
+    return () => document.removeEventListener('keydown', handler, true)
+  }, [])
 
   useEffect(() => {
     if (visible && inputRef.current) {
