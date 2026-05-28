@@ -4,6 +4,7 @@ const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
 const yaml = require('js-yaml')
+const semver = require('semver')
 
 // ── Protocol registration ────────────────────────────────────────────────────
 // Register in packaged builds so macOS lists the app in default browser settings.
@@ -509,9 +510,24 @@ function injectSiteRules(webContents, url) {
 // ── Keyboard shortcuts (per-webContents, not global) ───────────────────────
 function registerShortcuts(contents, getState) {
   contents.on('before-input-event', (event, input) => {
-    if (!input.meta && !input.control) return
+    if (input.type !== 'keyDown') return
     const state = getState()
     if (!state) return
+
+    // Escape (no modifiers) closes the overlay on URL-loaded pages.
+    // Handled in main so it works regardless of which element inside the
+    // overlay renderer has focus. Blank-tab windows ignore it — there's no
+    // page to fall back to.
+    if (input.key === 'Escape' && !input.meta && !input.control && !input.shift && !input.alt) {
+      const ob = state.overlayView?.getBounds()
+      if (state.url && ob && ob.width > 0) {
+        event.preventDefault()
+        setOverlayVisibility(state, false)
+      }
+      return
+    }
+
+    if (!input.meta && !input.control) return
     const key = input.key?.toLowerCase()
 
     if (key === ',' && input.type === 'keyDown') {
@@ -955,8 +971,13 @@ ipcMain.handle('check-for-app-update', async () => {
   try {
     const result = await autoUpdater.checkForUpdates()
     if (!result?.updateInfo) return { available: false }
-    const available = result.updateInfo.version !== app.getVersion()
+    // Only treat the feed version as available if it's strictly newer.
+    // The autoUpdater feed can publish older versions (e.g. while we're
+    // running a freshly built local build) and we don't want to surface
+    // those as "available" updates.
+    const available = semver.gt(result.updateInfo.version, app.getVersion())
     if (available) broadcastAppUpdate({ status: 'available', version: result.updateInfo.version })
+    else broadcastAppUpdate({ status: 'idle' })
     return { available, version: result.updateInfo.version, currentVersion: app.getVersion() }
   } catch (err) {
     return { available: false, error: err.message }
