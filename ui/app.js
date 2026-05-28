@@ -58,7 +58,7 @@ function App() {
       })
     })
     window.browser.onShowOverlay(() => {
-      setBlankTab(true)
+      setBlankTab(!currentUrlRef.current)
       setVisible(true)
       setView('main')
       openOverlay()
