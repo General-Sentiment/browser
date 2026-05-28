@@ -100,6 +100,22 @@ function App() {
         window.browser.setOverlayVisible(true)
       }
     })
+
+    // Pull the initial overlay state. The main side fires a 'show-overlay'
+    // push after did-finish-load, but useEffect can register the listener
+    // after that push lands, leaving the overlay invisible on a blank-tab
+    // window (most visible on Cmd+N). Pulling once closes the race.
+    window.browser.getOverlayState().then(s => {
+      if (!s) return
+      setCurrentUrl(s.url || '')
+      if (s.blankTab) {
+        setBlankTab(true)
+        setVisible(true)
+        setView('main')
+        openOverlay()
+        setTimeout(() => { if (inputRef.current) { inputRef.current.focus(); inputRef.current.select() } }, 50)
+      }
+    })
   }, [])
 
   useEffect(() => {

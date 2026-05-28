@@ -6,6 +6,7 @@ export function SettingsView({ onBack }) {
   const [updateStatus, setUpdateStatus] = useState(null)
   const [siteRules, setSiteRules] = useState(null)
   const [isDefault, setIsDefault] = useState(null)
+  const [historyCount, setHistoryCount] = useState(null)
   const [message, setMessage] = useState('')
   // { status: 'idle' | 'available' | 'downloading' | 'ready' | 'error', version?, percent?, error? }
   const [appUpdate, setAppUpdate] = useState({ status: 'idle' })
@@ -18,6 +19,7 @@ export function SettingsView({ onBack }) {
     window.browser.getUpdateStatus().then(setUpdateStatus)
     window.browser.getSiteRules().then(setSiteRules)
     window.browser.isDefaultBrowser().then(setIsDefault)
+    window.browser.getHistory().then(h => setHistoryCount(h.length))
     window.browser.getAppVersion().then(setAppVersion)
     window.browser.isDevMode().then(setDevMode)
     window.browser.getAppUpdateState().then(s => { if (s) setAppUpdate(s) })
@@ -166,6 +168,28 @@ export function SettingsView({ onBack }) {
                   setTimeout(() => window.browser.isDefaultBrowser().then(setIsDefault), 1000)
                 }}>Set as Default</button>`
             }
+          </div>
+        </div>
+
+        <hr class="settings-divider" />
+
+        <div class="settings-field">
+          <label class="settings-label">History</label>
+          <p class="settings-hint">${historyCount === 0
+            ? 'No browsing history.'
+            : historyCount === 1
+              ? '1 entry saved to history.json.'
+              : `${historyCount ?? '—'} entries saved to history.json.`
+          }</p>
+          <div class="settings-actions">
+            <button
+              class="settings-btn"
+              disabled=${!historyCount}
+              onClick=${async () => {
+                await window.browser.clearHistory()
+                setHistoryCount(0)
+              }}
+            >Clear History</button>
           </div>
         </div>
 

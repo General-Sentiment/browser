@@ -52,9 +52,11 @@ contextBridge.exposeInMainWorld('browser', {
   navigate:   (url) => ipcRenderer.invoke('navigate', url),
   back:       ()    => ipcRenderer.invoke('go-back'),
   forward:    ()    => ipcRenderer.invoke('go-forward'),
-  getHistory: ()    => ipcRenderer.invoke('get-history'),
+  getHistory:   ()  => ipcRenderer.invoke('get-history'),
+  clearHistory: ()  => ipcRenderer.invoke('clear-history'),
 
   setOverlayVisible: (v) => ipcRenderer.invoke('set-overlay-visible', v),
+  getOverlayState:   ()  => ipcRenderer.invoke('get-overlay-state'),
   onToggleOverlay: (cb) => { ipcRenderer.removeAllListeners('toggle-overlay'); ipcRenderer.on('toggle-overlay', cb) },
   onShowOverlay:   (cb) => { ipcRenderer.removeAllListeners('show-overlay'); ipcRenderer.on('show-overlay', cb) },
   onHideOverlay:   (cb) => { ipcRenderer.removeAllListeners('hide-overlay'); ipcRenderer.on('hide-overlay', cb) },

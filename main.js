@@ -635,7 +635,17 @@ function createWindowState({ showOverlay = false } = {}) {
     },
   })
   state.win.contentView.addChildView(state.overlayView)
-  state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+  // Start the overlay at the right size up front. Starting at 0×0 and
+  // resizing later leaves the WebContentsView not painting on macOS
+  // (you end up staring at the window's backgroundColor). Blank-tab
+  // windows get full bounds; URL-loaded windows get 0×0 since the page
+  // view covers everything.
+  if (showOverlay) {
+    const wb = state.win.contentView.getBounds()
+    state.overlayView.setBounds({ x: 0, y: 0, width: wb.width, height: wb.height })
+  } else {
+    state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+  }
   state.overlayView.webContents.loadFile(path.join(getUIPath(), 'index.html'))
   state.overlayView.setBackgroundColor('#00000000')
 
@@ -672,12 +682,12 @@ function createWindowState({ showOverlay = false } = {}) {
       }
       state.view.webContents.focus()
     } else {
-      // Blank tab: re-assert the overlay. After certain focus-switch
-      // sequences the WebContentsView layer can stop painting until its
-      // bounds are set again, and the URL input needs its focus restored
-      // so the user can type without clicking or pressing Cmd+L.
-      fitOverlay(state)
-      state.overlayView.webContents.focus()
+      // Blank tab: re-assert the overlay via the shared visibility
+      // function. After certain focus-switch sequences the WebContentsView
+      // layer can stop painting until its bounds are set again, and the
+      // URL input needs its focus restored so the user can type without
+      // clicking or pressing Cmd+L.
+      setOverlayVisibility(state, true)
     }
   })
 
@@ -740,22 +750,28 @@ function notifyUI(state) {
   })
 }
 
-function showOverlayIfBlank(state) {
-  if (!state.url) {
-    if (state.overlayView) {
-      fitOverlay(state)
-      state.overlayView.webContents.focus()
-      state.win.setWindowButtonPosition({ x: 12, y: 12 })
-      state.overlayView.webContents.send('show-overlay')
-    }
+// Single place that flips the overlay's visibility. Main is the authority:
+// on a blank-tab window (no URL has been loaded), the overlay is always
+// visible — the URL input is the only UI, so hiding it would strand the
+// user with no way to type. Any caller asking to hide gets overridden.
+function setOverlayVisibility(state, visible) {
+  if (!state || !state.win || state.win.isDestroyed() || !state.overlayView) return
+  if (!state.url) visible = true
+  if (visible) {
+    fitOverlay(state)
+    state.overlayView.webContents.focus()
+    state.win.setWindowButtonPosition({ x: 12, y: 12 })
+    state.overlayView.webContents.send('show-overlay')
   } else {
-    if (state.overlayView) {
-      state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-      state.win.setWindowButtonPosition({ x: -20, y: -20 })
-      state.overlayView.webContents.send('hide-overlay')
-      state.view.webContents.focus()
-    }
+    state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    state.win.setWindowButtonPosition({ x: -20, y: -20 })
+    state.overlayView.webContents.send('hide-overlay')
+    state.view.webContents.focus()
   }
+}
+
+function showOverlayIfBlank(state) {
+  setOverlayVisibility(state, !state.url)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -801,6 +817,11 @@ ipcMain.handle('navigate', (e, url) => {
     }
   }
   state.view.webContents.loadURL(target)
+  // Mark as loaded synchronously. did-navigate fires later, but the
+  // blank-tab overlay lock keys off state.url — leaving it empty here
+  // would re-assert the overlay the moment the renderer tries to hide
+  // it after the user submits a URL.
+  state.url = target
 })
 
 ipcMain.handle('go-back', (e) => {
@@ -817,6 +838,22 @@ ipcMain.handle('go-forward', (e) => {
 
 ipcMain.handle('get-history', () => history)
 
+ipcMain.handle('clear-history', () => {
+  history = []
+  saveHistory()
+  return { ok: true, count: 0 }
+})
+
+// Initial overlay state, queried by the renderer on mount. The main-side
+// did-finish-load handler also sends a 'show-overlay' push, but if the
+// renderer's useEffect hasn't registered the listener in time the message
+// is lost and the overlay stays invisible. Pulling here closes the race.
+ipcMain.handle('get-overlay-state', (e) => {
+  const state = stateFromEvent(e)
+  if (!state) return { blankTab: false, url: '', title: '' }
+  return { blankTab: !state.url, url: state.url, title: state.title }
+})
+
 ipcMain.handle('reload-ui', (e, restoreView) => {
   const state = stateFromEvent(e)
   if (!state?.overlayView) return
@@ -827,17 +864,7 @@ ipcMain.handle('reload-ui', (e, restoreView) => {
 })
 
 ipcMain.handle('set-overlay-visible', (e, visible) => {
-  const state = stateFromEvent(e)
-  if (!state || !state.win || !state.overlayView) return
-  if (visible) {
-    fitOverlay(state)
-    state.overlayView.webContents.focus()
-    state.win.setWindowButtonPosition({ x: 12, y: 12 })
-  } else {
-    state.overlayView.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    state.win.setWindowButtonPosition({ x: -20, y: -20 })
-    state.view.webContents.focus()
-  }
+  setOverlayVisibility(stateFromEvent(e), visible)
 })
 
 ipcMain.handle('get-settings', () => settings)
