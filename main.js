@@ -88,26 +88,28 @@ When editing anything in this directory, read the AGENTS.md in the relevant subd
 
 ## Applying Updates (/update-ui)
 
-When \`UPDATE.md\` appears in this directory, the browser's built-in UI has changed upstream. A machine-readable manifest is written to \`pending-update.yml\`:
+When \`UPDATE.md\` appears in this directory, the browser's built-in UI has changed upstream. \`UPDATE.md\` itself contains the new content for each changed file as a fenced code block under a \`## File: <path> (<status>)\` heading. A machine-readable companion is written to \`pending-update.yml\`:
 
 \`\`\`yaml
+from_version: 0.0.8
 source_dir: /path/to/~/.general-browser/ui
-builtin_dir: /path/to/app/ui
 files:
   - path: app.js
     status: modified
     user_modified: true
 \`\`\`
 
+For each entry, apply the embedded content to \`ui/<path>\` in this directory. Do not look inside the app bundle; everything you need is in \`UPDATE.md\`.
+
 ### For files the user has NOT modified (\`user_modified: false\`)
 
-- **modified**: copy from \`builtin_dir\` to \`source_dir\`. Safe to overwrite.
-- **added**: copy the new file from \`builtin_dir\`.
-- **deleted**: delete the file from \`source_dir\`.
+- **modified**: replace \`ui/<path>\` with the embedded content. Safe to overwrite.
+- **added**: write the embedded content to a new \`ui/<path>\`.
+- **deleted**: delete \`ui/<path>\` (no content block is included).
 
 ### For files the user HAS modified (\`user_modified: true\`)
 
-Read both the built-in (new upstream) version and the user's current version. Apply upstream changes while preserving the user's customizations.
+Read both \`ui/<path>\` (the user's current version) and the embedded block (the new upstream version). Merge upstream changes in while preserving customizations.
 
 - User changes always take priority.
 - If both sides changed the same region, keep the user's version and add a comment noting what upstream intended.
@@ -305,6 +307,19 @@ function ensureDataDir() {
   writeIfMissing('AGENTS.md', ROOT_AGENTS_MD)
   writeIfMissing('sites/AGENTS.md', SITES_AGENTS_MD)
   if (dataExists('ui')) writeIfMissing('ui/AGENTS.md', UI_AGENTS_MD)
+
+  // Stale flag files from a previous boot — clear them if there's nothing
+  // pending anymore (e.g. the user already brought their copy in line with
+  // the new built-in by hand).
+  if (app.isPackaged && (dataExists('UPDATE.md') || dataExists('pending-update.yml'))) {
+    try {
+      if (!checkForUIUpdates().pending) {
+        if (dataExists('UPDATE.md')) dataDelete('UPDATE.md')
+        if (dataExists('pending-update.yml')) dataDelete('pending-update.yml')
+        writeInitialManifest()
+      }
+    } catch {}
+  }
 }
 
 function loadSettings() {
@@ -410,14 +425,14 @@ function checkForUIUpdates() {
 
     for (const [rel, hash] of Object.entries(builtinHashes)) {
       const manifestHash = manifest.files?.[rel]
+      const userRel = 'ui/' + rel
+      const userHash = dataExists(userRel) ? hashFile(resolveDataPath(userRel)) : null
+      // Skip when the user's copy already matches the new built-in — nothing to merge.
+      if (userHash === hash) continue
       if (!manifestHash) {
         files.push({ path: rel, status: 'added', user_modified: false })
       } else if (hash !== manifestHash) {
-        const userRel = 'ui/' + rel
-        let userModified = false
-        if (dataExists(userRel)) {
-          userModified = hashFile(resolveDataPath(userRel)) !== manifestHash
-        }
+        const userModified = userHash !== null && userHash !== manifestHash
         files.push({ path: rel, status: 'modified', user_modified: userModified })
       }
     }
@@ -425,7 +440,9 @@ function checkForUIUpdates() {
     for (const rel of Object.keys(manifest.files || {})) {
       if (!builtinHashes[rel]) {
         const userRel = 'ui/' + rel
-        const userModified = dataExists(userRel) && hashFile(resolveDataPath(userRel)) !== manifest.files[rel]
+        // Already removed locally — nothing to do.
+        if (!dataExists(userRel)) continue
+        const userModified = hashFile(resolveDataPath(userRel)) !== manifest.files[rel]
         files.push({ path: rel, status: 'deleted', user_modified: userModified })
       }
     }
@@ -894,13 +911,15 @@ ipcMain.handle('get-update-status', () => checkForUIUpdates())
 ipcMain.handle('prepare-update', () => {
   const status = checkForUIUpdates()
   if (!status.pending) return { success: false, error: 'No updates' }
+  const version = require('./package.json').version
   const lines = [
     '# Pending Update',
     '',
     `Generated: ${new Date().toISOString()}`,
-    `Version: ${require('./package.json').version}`,
-    `Source: ${USER_UI_DIR}`,
-    `Built-in: ${BUILTIN_UI}`,
+    `Version: ${version}`,
+    `Local UI: ${USER_UI_DIR}`,
+    '',
+    'The new upstream content for each changed file is embedded below as a fenced code block. Merge each block into `ui/<path>` in this directory, preserving any local customizations.',
     '',
     '## Changed Files',
     '',
@@ -910,18 +929,40 @@ ipcMain.handle('prepare-update', () => {
   for (const f of status.files) {
     lines.push(`| ${f.path} | ${f.status} | ${f.user_modified ? 'yes' : 'no'} |`)
   }
-  lines.push('')
-  lines.push('## How to apply')
-  lines.push('')
-  lines.push('Run `/update-ui` in Claude Code from this directory, or apply manually.')
-  lines.push('After applying, click "Mark as Resolved" in browser settings.')
-  lines.push('')
+  lines.push('', '## How to apply', '', 'Run `/update-ui` in Claude Code from this directory, or apply manually:')
+  lines.push('- **modified, user_modified=no**: replace `ui/<path>` with the embedded content.')
+  lines.push('- **modified, user_modified=yes**: merge the embedded content into `ui/<path>`. User changes win on conflicts.')
+  lines.push('- **added**: write the embedded content to `ui/<path>`.')
+  lines.push('- **deleted**: remove `ui/<path>`.')
+  lines.push('', 'After applying, click "Mark as Resolved" in browser settings.', '')
+
+  for (const f of status.files) {
+    const header = `## File: ${f.path} (${f.status}${f.user_modified ? ', user-modified' : ''})`
+    lines.push('---', '', header, '')
+    if (f.status === 'deleted') {
+      lines.push(`Removed upstream. Delete \`ui/${f.path}\` from this directory.`, '')
+      continue
+    }
+    const builtinPath = path.join(BUILTIN_UI, f.path)
+    let content
+    try { content = fs.readFileSync(builtinPath, 'utf8') } catch (err) {
+      lines.push(`Could not read upstream content: ${err.message}`, '')
+      continue
+    }
+    const matches = content.match(/`{3,}/g) || []
+    const longest = matches.reduce((n, s) => Math.max(n, s.length), 2)
+    const fence = '`'.repeat(longest + 1)
+    const lang = ({ js: 'js', mjs: 'js', css: 'css', html: 'html', htm: 'html', json: 'json', md: 'markdown', yml: 'yaml', yaml: 'yaml' })[path.extname(f.path).slice(1).toLowerCase()] || ''
+    lines.push(fence + lang)
+    lines.push(content.replace(/\n+$/, ''))
+    lines.push(fence)
+    lines.push('')
+  }
+
   dataWrite('UPDATE.md', lines.join('\n'))
-  // Machine-readable companion for the /update-ui skill.
   dataWrite('pending-update.yml', yaml.dump({
-    from_version: require('./package.json').version,
+    from_version: version,
     source_dir: USER_UI_DIR,
-    builtin_dir: BUILTIN_UI,
     files: status.files,
   }))
   return { success: true, path: UPDATE_MD_PATH }
